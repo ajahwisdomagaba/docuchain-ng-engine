@@ -6,7 +6,7 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-const NOTICE_THRESHOLDS = [90, 60, 30, 7];
+const STATUTORY_ALERT_WINDOWS = [90, 60, 30, 7];
 
 async function sendTelegramAlert(chatId: string, message: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -23,97 +23,126 @@ async function sendTelegramAlert(chatId: string, message: string) {
       })
     });
   } catch (err: any) {
-    console.error('Telegram dispatch failed:', err.message);
+    console.error('Telegram dispatch error:', err.message);
   }
 }
 
 export async function GET(req: NextRequest) {
   try {
     const authHeader = req.headers.get('authorization');
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: 'Unauthorized invocation' }, { status: 401 });
+    const cronSecret = process.env.CRON_SECRET;
+
+    // Verify Vercel / external cron authorization secret if configured
+    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized cron invocation' }, { status: 401 });
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const nowIso = now.toISOString();
 
-    const targetDateMap = new Map<string, number>();
-    const dateList: string[] = [];
+    // ----------------------------------------------------
+    // TASK 1: Process Due Plan Downgrades (Cycle Expiration)
+    // ----------------------------------------------------
+    const { data: expiredSubs, error: subErr } = await supabaseAdmin
+      .from('subscriptions')
+      .select('*')
+      .not('pending_downgrade_plan', 'is', null)
+      .lte('downgrade_effective_date', nowIso);
 
-    NOTICE_THRESHOLDS.forEach((days) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() + days);
-      const isoDate = d.toISOString().split('T')[0];
-      targetDateMap.set(isoDate, days);
-      dateList.push(isoDate);
-    });
+    let processedDowngrades = 0;
+    if (expiredSubs && expiredSubs.length > 0) {
+      for (const sub of expiredSubs) {
+        await supabaseAdmin
+          .from('subscriptions')
+          .update({
+            plan_tier: sub.pending_downgrade_plan,
+            pending_downgrade_plan: null,
+            downgrade_effective_date: null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', sub.id);
 
-    const { data: obligations, error } = await supabaseAdmin
+        await supabaseAdmin
+          .from('profiles')
+          .update({ plan_tier: sub.pending_downgrade_plan })
+          .eq('id', sub.user_id);
+
+        processedDowngrades++;
+      }
+    }
+
+    // ----------------------------------------------------
+    // TASK 2: Scan Approaching Statutory Notice Obligations
+    // ----------------------------------------------------
+    const { data: pendingObligations, error: obErr } = await supabaseAdmin
       .from('obligations')
-      .select(`
-        id,
-        title,
-        description,
-        due_date,
-        amount_ngn,
-        obligation_type,
-        status,
-        user_id,
-        contract:contracts (
-          id,
-          title,
-          counterparty,
-          contract_type
-        )
-      `)
-      .eq('status', 'PENDING')
-      .in('due_date', dateList)
-      .order('due_date', { ascending: true });
+      .select('*, contracts:contract_id(title, counterparty, governing_law, user_id)')
+      .eq('status', 'PENDING');
 
-    if (error) throw error;
+    if (obErr) throw obErr;
 
-    const dispatchedAlerts = [];
+    const dispatchedAlerts: any[] = [];
 
-    for (const item of obligations || []) {
-      const daysRemaining = targetDateMap.get(item.due_date) || 0;
-      const contract = (item as any).contract;
-      const contractTitle = contract?.title || 'Contract Document';
-      const counterparty = contract?.counterparty || 'Counterparty';
+    if (pendingObligations && pendingObligations.length > 0) {
+      for (const ob of pendingObligations) {
+        if (!ob.due_date) continue;
 
-      const alertPayload = {
-        obligationId: item.id,
-        title: item.title,
-        daysRemaining,
-        dueDate: item.due_date,
-        contractTitle,
-        counterparty
-      };
+        const dueDate = new Date(ob.due_date);
+        const diffMs = dueDate.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-      dispatchedAlerts.push(alertPayload);
+        if (STATUTORY_ALERT_WINDOWS.includes(diffDays)) {
+          const contractTitle = ob.contracts?.title || 'Contract Document';
+          const counterparty = ob.contracts?.counterparty || 'Counterparty';
+          const userId = ob.contracts?.user_id;
 
-      const telegramMessage = 
-        `🚨 *DocuChain NG — Statutory Notice Alert*\n\n` +
-        `⏳ *${daysRemaining} Days Remaining* to statutory deadline.\n` +
-        `📄 *Agreement:* ${contractTitle}\n` +
-        `🤝 *Counterparty:* ${counterparty}\n` +
-        `📋 *Obligation:* ${item.title}\n` +
-        `📅 *Due Date:* ${item.due_date}\n\n` +
-        `⚖️ Check compliance under Lagos Tenancy Law 2011 / CAMA 2020.`;
+          // Fetch user profile for telegram chat settings
+          let telegramChatId = process.env.TELEGRAM_DEFAULT_CHAT_ID;
+          if (userId) {
+            const { data: profile } = await supabaseAdmin
+              .from('profiles')
+              .select('telegram_chat_id')
+              .eq('id', userId)
+              .single();
 
-      if (process.env.TELEGRAM_ALERT_CHAT_ID) {
-        await sendTelegramAlert(process.env.TELEGRAM_ALERT_CHAT_ID, telegramMessage);
+            if (profile?.telegram_chat_id) {
+              telegramChatId = profile.telegram_chat_id;
+            }
+          }
+
+          const alertMessage = 
+            `⚠️ *DocuChain Statutory Alert: ${diffDays} Days Remaining*\n\n` +
+            `*Obligation:* ${ob.title}\n` +
+            `*Contract:* ${contractTitle}\n` +
+            `*Counterparty:* ${counterparty}\n` +
+            `*Due Date:* ${dueDate.toLocaleDateString('en-GB')}\n` +
+            `*Details:* ${ob.description || 'Statutory determination or notice period window.'}\n\n` +
+            `_Action Required: Review in DocuChain Vault to avoid statutory penalties under Lagos Tenancy Law 2011 / CAMA 2020._`;
+
+          if (telegramChatId) {
+            await sendTelegramAlert(telegramChatId, alertMessage);
+          }
+
+          dispatchedAlerts.push({
+            obligationId: ob.id,
+            daysRemaining: diffDays,
+            contractTitle,
+            recipient: telegramChatId || 'No Telegram ID linked'
+          });
+        }
       }
     }
 
     return NextResponse.json({
       success: true,
-      timestamp: new Date().toISOString(),
-      thresholdsChecked: NOTICE_THRESHOLDS,
-      alertsFound: dispatchedAlerts.length,
-      dispatchedAlerts
+      timestamp: nowIso,
+      downgradesProcessed: processedDowngrades,
+      alertsDispatched: dispatchedAlerts.length,
+      alerts: dispatchedAlerts
     });
+
   } catch (err: any) {
-    console.error('Cron alert scanner error:', err.message);
+    console.error('Cron job alert failure:', err.message);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

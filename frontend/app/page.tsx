@@ -9,9 +9,7 @@ import {
   FileEdit, 
   CheckCircle2, 
   ArrowRight, 
-  Building2, 
   Zap, 
-  Lock, 
   AlertTriangle,
   Bot,
   PenTool,
@@ -24,6 +22,15 @@ import { useAuth } from '@/context/AuthContext';
 
 export default function LandingPage() {
   const { user } = useAuth();
+
+  const handleSelectPlan = (tier: 'FREE' | 'STARTER' | 'ENTERPRISE') => {
+    localStorage.setItem('docuchain_selected_plan', tier);
+    if (!user) {
+      window.location.href = `/auth?plan=${tier}`;
+    } else {
+      window.location.href = `/pricing?plan=${tier}`;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-emerald-500 selection:text-slate-950">
@@ -90,11 +97,13 @@ export default function LandingPage() {
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
-          <Link href={user ? "/vault" : "/auth"}>
-            <Button size="lg" className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-8 h-12 shadow-lg shadow-emerald-950 flex items-center gap-2 w-full sm:w-auto">
-              Ingest & Audit Free <ArrowRight className="w-4 h-4" />
-            </Button>
-          </Link>
+          <Button 
+            onClick={() => handleSelectPlan('FREE')}
+            size="lg" 
+            className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-8 h-12 shadow-lg shadow-emerald-950 flex items-center gap-2 w-full sm:w-auto"
+          >
+            Ingest & Audit Free <ArrowRight className="w-4 h-4" />
+          </Button>
           <a href="#comparison" className="w-full sm:w-auto">
             <Button size="lg" variant="outline" className="border-slate-700 bg-slate-900 text-slate-300 hover:text-white h-12 text-sm px-6 w-full">
               See Comparison
@@ -253,10 +262,10 @@ export default function LandingPage() {
                 <p className="text-xs text-slate-500">Per individual contract draft</p>
               </CardHeader>
               <CardContent className="px-6 pb-6 text-xs text-slate-400 space-y-3">
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> 3–7 day turnaround time</p>
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> No automatic expiry reminders</p>
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> Static paperwork in filing cabinets</p>
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> No instant clause search</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> 3–7 day turnaround time</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> No automatic expiry reminders</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Static paperwork in filing cabinets</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> No instant clause search</p>
               </CardContent>
             </Card>
 
@@ -267,10 +276,10 @@ export default function LandingPage() {
                 <p className="text-xs text-slate-500">Billed in volatile USD</p>
               </CardHeader>
               <CardContent className="px-6 pb-6 text-xs text-slate-400 space-y-3">
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> Understands US/UK law only</p>
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> Misses Lagos rent & notice caps</p>
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> Unaware of FIRS WHT regulations</p>
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /> Expensive enterprise rollout</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Understands US/UK law only</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Misses Lagos rent & notice caps</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Unaware of FIRS WHT regulations</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Expensive enterprise rollout</p>
               </CardContent>
             </Card>
 
@@ -284,17 +293,17 @@ export default function LandingPage() {
                 <p className="text-xs text-emerald-500">Accessible local pricing</p>
               </CardHeader>
               <CardContent className="px-6 pb-6 text-xs text-slate-200 space-y-3">
-                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Lagos Tenancy & CAMA 2020 audits</p>
-                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Automated 90/60/30/7-day notice alerts</p>
-                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Cross-vault cited clause semantic search</p>
-                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Built-in e-signatures & templates</p>
+                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Lagos Tenancy & CAMA 2020 audits</p>
+                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Automated 90/60/30/7-day notice alerts</p>
+                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Cross-vault cited clause semantic search</p>
+                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Built-in e-signatures & templates</p>
               </CardContent>
             </Card>
           </div>
         </div>
       </section>
 
-      {/* Pricing Section with Interactive Hover Green Glow */}
+      {/* Pricing Section with Hover Glow */}
       <section id="pricing" className="py-24 max-w-6xl mx-auto px-6 space-y-12">
         <div className="text-center space-y-3">
           <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 text-xs">Transparent NGN Pricing</Badge>
@@ -315,14 +324,16 @@ export default function LandingPage() {
                 <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Single-document cited Q&A assistant</li>
               </ul>
             </div>
-            <Link href={user ? "/vault" : "/auth"}>
-              <Button variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
-                Start Free
-              </Button>
-            </Link>
+            <Button 
+              onClick={() => handleSelectPlan('FREE')}
+              variant="outline" 
+              className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors"
+            >
+              Start Free
+            </Button>
           </div>
 
-          {/* Starter Plan (Featured) */}
+          {/* Starter Plan */}
           <div className="group bg-slate-900 border-2 border-emerald-500 rounded-2xl p-6 flex flex-col justify-between space-y-6 relative shadow-xl shadow-emerald-950/50 transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-900/60 hover:-translate-y-1 hover:border-emerald-400">
             <div className="absolute -top-3 left-1/2 -translate-x-1/2">
               <Badge className="bg-emerald-600 text-white text-[10px] tracking-wider uppercase font-semibold">RECOMMENDED FOR SMES</Badge>
@@ -338,11 +349,12 @@ export default function LandingPage() {
                 <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Unlimited statutory drafting & e-signatures</li>
               </ul>
             </div>
-            <Link href={user ? "/vault" : "/auth"}>
-              <Button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-950 transition-colors">
-                Get Started
-              </Button>
-            </Link>
+            <Button 
+              onClick={() => handleSelectPlan('STARTER')}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-950 transition-colors"
+            >
+              Get Started
+            </Button>
           </div>
 
           {/* Business Pro */}
@@ -358,11 +370,13 @@ export default function LandingPage() {
                 <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Priority WhatsApp & phone support</li>
               </ul>
             </div>
-            <Link href={user ? "/vault" : "/auth"}>
-              <Button variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
-                Contact Sales
-              </Button>
-            </Link>
+            <Button 
+              onClick={() => handleSelectPlan('ENTERPRISE')}
+              variant="outline" 
+              className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors"
+            >
+              Upgrade to Enterprise
+            </Button>
           </div>
         </div>
       </section>

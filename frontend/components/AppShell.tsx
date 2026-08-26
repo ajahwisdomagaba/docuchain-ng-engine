@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
@@ -11,9 +11,12 @@ import {
   Scale, 
   LogOut,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  User as UserIcon,
+  Sparkles
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/lib/supabaseClient';
 
 const NAV_ITEMS = [
   { name: 'Contract Vault', href: '/vault', icon: FolderLock },
@@ -26,13 +29,42 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(user);
 
-  // Hide the shell completely on public/landing/auth pages
-  const isPublicPage = pathname === '/' || pathname.startsWith('/auth') || pathname.startsWith('/onboarding');
+  useEffect(() => {
+    if (user) {
+      setCurrentUser(user);
+    } else {
+      supabase.auth.getUser().then(({ data }) => {
+        if (data?.user) {
+          setCurrentUser(data.user);
+        } else {
+          setCurrentUser(null);
+        }
+      });
+    }
+  }, [user]);
+
+  // Hide the shell completely on public, auth, pricing, and onboarding flows
+  const isPublicPage = 
+    pathname === '/' || 
+    pathname.startsWith('/auth') || 
+    pathname.startsWith('/pricing') || 
+    pathname.startsWith('/onboarding') ||
+    pathname.startsWith('/billing');
 
   if (isPublicPage) {
     return <>{children}</>;
   }
+
+  const handleSignOut = async () => {
+    if (signOut) {
+      await signOut();
+    } else {
+      await supabase.auth.signOut();
+    }
+    window.location.href = '/';
+  };
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
@@ -61,7 +93,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               )}
             </Link>
 
-            {/* Toggle Minimize/Maximize Icon */}
             <button
               onClick={() => setIsCollapsed(!isCollapsed)}
               className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-800 bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
@@ -71,7 +102,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
 
-          {/* Nav Items */}
+          {/* Navigation Items */}
           <nav className="space-y-1.5">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
@@ -101,30 +132,48 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Bottom User Area */}
-        <div className="border-t border-slate-800 pt-3">
-          {user ? (
-            <button
-              onClick={() => signOut()}
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium text-slate-400 hover:bg-rose-950/30 hover:text-rose-400 transition-colors"
-              title={isCollapsed ? 'Sign Out' : undefined}
-            >
-              <LogOut className="h-4 w-4 shrink-0" />
-              {!isCollapsed && <span>Sign Out</span>}
-            </button>
+        <div className="border-t border-slate-800 pt-3 space-y-2">
+          {/* Plan Settings Link */}
+          <Link
+            href="/pricing"
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium text-emerald-400 hover:bg-emerald-950/30 transition-colors border border-emerald-900/40 bg-emerald-950/10"
+            title={isCollapsed ? 'Upgrade Plan' : undefined}
+          >
+            <Sparkles className="h-4 w-4 shrink-0 text-emerald-400" />
+            {!isCollapsed && <span className="font-semibold truncate">Manage Plan / Upgrade</span>}
+          </Link>
+
+          {currentUser ? (
+            <div className="space-y-1">
+              {!isCollapsed && (
+                <div className="px-3 py-1 text-[11px] text-slate-400 truncate flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                  <span className="truncate">{currentUser.email}</span>
+                </div>
+              )}
+              <button
+                onClick={handleSignOut}
+                className="w-full flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium text-slate-400 hover:bg-rose-950/30 hover:text-rose-400 transition-colors"
+                title={isCollapsed ? 'Sign Out' : undefined}
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                {!isCollapsed && <span>Sign Out</span>}
+              </button>
+            </div>
           ) : (
             <Link
-              href="/auth/login"
+              href="/auth"
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-900 hover:text-white transition-colors"
               title={isCollapsed ? 'Sign In' : undefined}
             >
-              <div className="h-4 w-4 shrink-0 rounded-full bg-slate-800 border border-slate-700" />
+              <UserIcon className="h-4 w-4 shrink-0" />
               {!isCollapsed && <span>Sign In</span>}
             </Link>
           )}
         </div>
       </aside>
 
-      {/* Main Content Area dynamically adjusts its margin */}
+      {/* Main Content Area dynamically adjusts offset */}
       <main 
         className={`flex-1 transition-all duration-300 ease-in-out min-w-0 ${
           isCollapsed ? 'pl-16' : 'pl-64'
