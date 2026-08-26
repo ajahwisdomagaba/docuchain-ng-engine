@@ -1,13 +1,13 @@
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import './globals.css';
-import { NavSidebar } from '../components/nav-sidebar';
+import { Inter } from 'next/font/google';
+import { AuthProvider } from '@/context/AuthContext';
+import AppShell from '@/components/AppShell';
 
 const inter = Inter({ subsets: ['latin'] });
 
-export const metadata: Metadata = {
-  title: 'DocuChain NG - Statutory Contract Redlining & Vault',
-  description: 'Automated legal contract compliance and redlining under Nigerian Law',
+export const metadata = {
+  title: 'DocuChain.NG — Context-Aware Contract Intelligence for Nigerian Businesses',
+  description: 'AI-powered contract auditing, statutory benchmarking, and obligation monitoring under Nigerian Law.',
 };
 
 export default function RootLayout({
@@ -16,12 +16,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} bg-slate-50 text-slate-900 min-h-screen flex antialiased`}>
-        <NavSidebar />
-        <main className="flex-1 overflow-y-auto min-h-screen bg-slate-50 p-8">
-          {children}
-        </main>
+    <html lang="en" className="dark">
+      <body className={`${inter.className} bg-slate-950 text-slate-100 min-h-screen antialiased`}>
+        <AuthProvider>
+          <AppShell>
+            {children}
+          </AppShell>
+        </AuthProvider>
       </body>
     </html>
   );
