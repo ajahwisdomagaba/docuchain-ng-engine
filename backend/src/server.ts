@@ -7,6 +7,11 @@ import { TenancyRedlineService } from './services/redline.service';
 import { ContractStorageService } from './services/storage.service';
 import { SemanticSearchService } from './services/search.service';
 import { startTelegramBot } from './bot/telegramBot';
+import { scheduleNightlyAlertsJob } from './jobs/contractAlerts.job';
+
+// Initialize BullMQ repeatable schedule
+scheduleNightlyAlertsJob().catch(console.error);
+
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;

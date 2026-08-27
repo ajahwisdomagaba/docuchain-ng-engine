@@ -20,10 +20,12 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/context/AuthContext';
 
+type PlanTier = 'FREE' | 'STARTER' | 'BUSINESS' | 'LEGAL_TEAM' | 'LAW_FIRM_RESELLER' | 'ONE_TIME_REVIEW';
+
 export default function LandingPage() {
   const { user } = useAuth();
 
-  const handleSelectPlan = (tier: 'FREE' | 'STARTER' | 'ENTERPRISE') => {
+  const handleSelectPlan = (tier: PlanTier) => {
     localStorage.setItem('docuchain_selected_plan', tier);
     if (!user) {
       window.location.href = `/auth?plan=${tier}`;
@@ -35,7 +37,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-emerald-500 selection:text-slate-950">
       
-      {/* Navigation */}
+      {/* Top Navbar */}
       <nav className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -289,7 +291,7 @@ export default function LandingPage() {
               </div>
               <CardHeader className="p-6">
                 <CardTitle className="text-base font-semibold text-emerald-400">DocuChain.NG</CardTitle>
-                <div className="text-2xl font-bold text-white mt-2">From ₦15,000 / mo</div>
+                <div className="text-2xl font-bold text-white mt-2">From ₦10,000 / mo</div>
                 <p className="text-xs text-emerald-500">Accessible local pricing</p>
               </CardHeader>
               <CardContent className="px-6 pb-6 text-xs text-slate-200 space-y-3">
@@ -303,79 +305,106 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing Section with Hover Glow */}
+      {/* Pricing Section with 4 Tiers + One-Time Review */}
       <section id="pricing" className="py-24 max-w-6xl mx-auto px-6 space-y-12">
         <div className="text-center space-y-3">
           <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 text-xs">Transparent NGN Pricing</Badge>
-          <h2 className="text-3xl font-bold text-white">Simple Plans for Every Growing Business</h2>
-          <p className="text-xs text-slate-400">Start free with sample audits. Upgrade when you need full vault monitoring.</p>
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-white">Simple Plans for Every Growing Business</h2>
+          <p className="text-xs text-slate-400">Choose a monthly tier or order a one-time contract audit.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Free Tier */}
-          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:shadow-xl hover:shadow-emerald-950/40 hover:-translate-y-1">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {/* Starter */}
+          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-950/40">
             <div className="space-y-4">
-              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Free / Sandbox</h3>
-              <div className="text-3xl font-bold text-white">₦0 <span className="text-xs text-slate-500 font-normal">/ forever</span></div>
-              <p className="text-xs text-slate-400">For testing individual contract audits.</p>
+              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Starter</h3>
+              <div className="text-3xl font-bold text-white">₦10,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
               <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 3 contract audits per month</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Statutory redline suggestions</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Single-document cited Q&A assistant</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 50 contracts</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Smart extraction</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Centralized vault</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Notice alerts</li>
               </ul>
             </div>
-            <Button 
-              onClick={() => handleSelectPlan('FREE')}
-              variant="outline" 
-              className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors"
-            >
-              Start Free
-            </Button>
-          </div>
-
-          {/* Starter Plan */}
-          <div className="group bg-slate-900 border-2 border-emerald-500 rounded-2xl p-6 flex flex-col justify-between space-y-6 relative shadow-xl shadow-emerald-950/50 transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-900/60 hover:-translate-y-1 hover:border-emerald-400">
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-              <Badge className="bg-emerald-600 text-white text-[10px] tracking-wider uppercase font-semibold">RECOMMENDED FOR SMES</Badge>
-            </div>
-            <div className="space-y-4">
-              <h3 className="text-base font-semibold text-white group-hover:text-emerald-300 transition-colors">Starter Business</h3>
-              <div className="text-3xl font-bold text-white">₦15,000 <span className="text-xs text-slate-500 font-normal">/ month</span></div>
-              <p className="text-xs text-slate-400">For growing Nigerian businesses, landlords, and founders.</p>
-              <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Up to 50 active contracts in vault</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Full Cross-Vault RAG Clause Search</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 90/60/30/7-day notice alert monitoring</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Unlimited statutory drafting & e-signatures</li>
-              </ul>
-            </div>
-            <Button 
-              onClick={() => handleSelectPlan('STARTER')}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-950 transition-colors"
-            >
+            <Button onClick={() => handleSelectPlan('STARTER')} variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
               Get Started
             </Button>
           </div>
 
-          {/* Business Pro */}
-          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:shadow-xl hover:shadow-emerald-950/40 hover:-translate-y-1">
+          {/* Business (Popular) */}
+          <div className="group bg-slate-900 border-2 border-emerald-500 rounded-2xl p-6 flex flex-col justify-between space-y-6 relative shadow-xl shadow-emerald-950/50 transition-all duration-300 hover:border-emerald-400 hover:-translate-y-1 hover:shadow-2xl hover:shadow-emerald-900/60">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+              <Badge className="bg-emerald-600 text-white text-[10px] uppercase font-bold tracking-wider">POPULAR</Badge>
+            </div>
             <div className="space-y-4">
-              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Enterprise / Legal</h3>
-              <div className="text-3xl font-bold text-white">₦45,000 <span className="text-xs text-slate-500 font-normal">/ month</span></div>
-              <p className="text-xs text-slate-400">For property management firms and corporate teams.</p>
+              <h3 className="text-base font-semibold text-white group-hover:text-emerald-300 transition-colors">Business</h3>
+              <div className="text-3xl font-bold text-white">₦30,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
               <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Unlimited contracts & batch OCR parsing</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Telegram Bot direct team query access</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Custom statutory benchmark rules</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Priority WhatsApp & phone support</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 500 contracts</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Clause risk scoring</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Cross-vault Q&A</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Obligation tracker</li>
               </ul>
             </div>
-            <Button 
-              onClick={() => handleSelectPlan('ENTERPRISE')}
-              variant="outline" 
-              className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors"
+            <Button onClick={() => handleSelectPlan('BUSINESS')} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-950 transition-colors">
+              Get Started
+            </Button>
+          </div>
+
+          {/* Legal Team */}
+          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-950/40">
+            <div className="space-y-4">
+              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Legal Team</h3>
+              <div className="text-3xl font-bold text-white">₦75,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
+              <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Unlimited contracts</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Template library</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Multi-user access</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Client portal</li>
+              </ul>
+            </div>
+            <Button onClick={() => handleSelectPlan('LEGAL_TEAM')} variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
+              Get Started
+            </Button>
+          </div>
+
+          {/* Law Firm Reseller */}
+          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-950/40">
+            <div className="space-y-4">
+              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Reseller</h3>
+              <div className="text-3xl font-bold text-white">₦150,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
+              <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> White-label portal</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Client vault manager</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> AI Draft & Review</li>
+                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Priority WhatsApp</li>
+              </ul>
+            </div>
+            <Button onClick={() => handleSelectPlan('LAW_FIRM_RESELLER')} variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
+              Contact Sales
+            </Button>
+          </div>
+        </div>
+
+        {/* Add-On: One-Time Contract Review */}
+        <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-2xl p-6 sm:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl shadow-emerald-950/30">
+          <div className="space-y-2 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-xs">NO SUBSCRIPTION REQUIRED</Badge>
+              <span className="text-xs text-slate-400 font-medium">One-Off Service</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-white">One-Time Contract Review for SMEs</h2>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Don&apos;t need a monthly subscription? Have a single tenancy lease, vendor SLA, or employment contract audited against Nigerian statutory law.
+            </p>
+          </div>
+          <div className="flex flex-col items-center md:items-end gap-3 shrink-0">
+            <div className="text-3xl font-extrabold text-white">₦15,000 <span className="text-xs font-normal text-slate-400">/ contract</span></div>
+            <Button
+              onClick={() => handleSelectPlan('ONE_TIME_REVIEW')}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-6 py-2.5 shadow-lg shadow-emerald-950"
             >
-              Upgrade to Enterprise
+              Order Single Review
             </Button>
           </div>
         </div>

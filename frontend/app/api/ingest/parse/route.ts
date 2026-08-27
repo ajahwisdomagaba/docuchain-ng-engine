@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { PLAN_PERMISSIONS, PlanTier } from '@/lib/tierPermissions';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,125 +10,128 @@ const supabaseAdmin = createClient(
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const file = formData.get('file') as File;
-    const userId = formData.get('userId') as string;
+    const file = formData.get('file') as File | null;
+    const rawText = formData.get('text') as string | null;
+    const userId = formData.get('userId') as string | null;
+    const title = (formData.get('title') as string) || file?.name || 'Untitled Contract';
+    const domain = (formData.get('domain') as string) || 'General Commercial';
+    const counterparty = (formData.get('counterparty') as string) || 'Unspecified Counterparty';
 
-    if (!file || !userId) {
-      return NextResponse.json({ error: 'File and userId are required' }, { status: 400 });
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    let extractedText = '';
+    // 1. Fetch user's active subscription tier
+    const { data: sub } = await supabaseAdmin
+      .from('subscriptions')
+      .select('plan_tier, status')
+      .eq('user_id', userId)
+      .eq('status', 'ACTIVE')
+      .single();
 
-    if (file.name.endsWith('.pdf')) {
-      const pdfParse = require('pdf-parse');
-      const data = await pdfParse(buffer);
-      extractedText = data.text;
-    } else if (file.name.endsWith('.docx')) {
-      const mammoth = require('mammoth');
-      const result = await mammoth.extractRawText({ buffer });
-      extractedText = result.value;
-    } else {
+    const currentTier: PlanTier = (sub?.plan_tier as PlanTier) || 'FREE';
+    const limits = PLAN_PERMISSIONS[currentTier] || PLAN_PERMISSIONS.FREE;
+
+    // 2. Enforce contract count limits
+    const { count, error: countErr } = await supabaseAdmin
+      .from('contracts')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (countErr) throw countErr;
+
+    if ((count ?? 0) >= limits.maxContracts) {
+      return NextResponse.json(
+        {
+          error: `Vault limit reached (${count}/${limits.maxContracts} contracts on ${currentTier} plan). Please upgrade your subscription to ingest more documents.`,
+          limitReached: true,
+          currentTier,
+          maxContracts: limits.maxContracts,
+        },
+        { status: 403 }
+      );
+    }
+
+    // 3. Extract text content
+    let extractedText = rawText || '';
+    if (file && !extractedText) {
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
       extractedText = buffer.toString('utf-8');
     }
 
     if (!extractedText.trim()) {
-      return NextResponse.json({ error: 'Failed to extract text from document.' }, { status: 422 });
+      return NextResponse.json(
+        { error: 'No readable text extracted from contract' },
+        { status: 400 }
+      );
     }
 
-    const isTenancy = /tenan(cy|t)|lease|landlord|rent/i.test(extractedText);
-    const isNDA = /non-disclosure|confidential|nda/i.test(extractedText);
-
-    let contractType = 'Vendor SLA';
-    let governingLaw = 'Laws of the Federal Republic of Nigeria';
-    let riskScore = 20;
+    // 4. Statutory risk benchmarking (Lagos Tenancy 2011 & CAMA 2020)
+    const lower = extractedText.toLowerCase();
     const riskFlags: any[] = [];
+    let riskScore = 95;
 
-    if (isTenancy) {
-      contractType = 'Tenancy Agreement';
-      governingLaw = 'Lagos State Tenancy Law 2011';
-      
-      if (/(two|2)\s*years?\s*advance/i.test(extractedText) || /24\s*months/i.test(extractedText)) {
-        riskScore += 35;
-        riskFlags.push({
-          clauseTitle: 'Excess Advance Rent Demand',
-          legalBasis: 'Lagos State Tenancy Law 2011, Section 4',
-          riskLevel: 'HIGH',
-          originalText: 'Advance rent exceeding 1 year requested.',
-          recommendedRedline: 'Limit advance payment to 1 year in compliance with Section 4 statutory provisions.',
-          plainEnglishExplanation: 'Demanding or paying more than 1 year advance rent from a yearly tenant is unlawful in Lagos.'
-        });
-      }
-
-      if (/(two|2)\s*weeks?\s*notice/i.test(extractedText)) {
-        riskScore += 30;
-        riskFlags.push({
-          clauseTitle: 'Deficient Notice Period',
-          legalBasis: 'Lagos State Tenancy Law 2011, Section 13(1)',
-          riskLevel: 'HIGH',
-          originalText: '2 weeks written notice to quit.',
-          recommendedRedline: 'Provide statutory six (6) months written notice to quit prior to term determination.',
-          plainEnglishExplanation: 'Yearly tenants in Lagos are statutorily entitled to at least 6 months written notice to quit.'
-        });
-      }
-    } else if (isNDA) {
-      contractType = 'Non-Disclosure Agreement';
-      if (/indefinitely|perpetual/i.test(extractedText)) {
-        riskScore += 20;
-        riskFlags.push({
-          clauseTitle: 'Perpetual Confidentiality Term',
-          legalBasis: 'Nigerian Common Law / Public Policy',
-          riskLevel: 'MEDIUM',
-          originalText: 'Obligations shall endure indefinitely.',
-          recommendedRedline: 'Limit confidentiality obligations to 2–3 years post-expiration.',
-          plainEnglishExplanation: 'Indefinite non-disclosure covenants are generally unenforceable under Nigerian commercial standards.'
-        });
-      }
+    if (lower.includes('two years') || lower.includes('2 years advance') || lower.includes('2 full years')) {
+      riskFlags.push({
+        type: 'HIGH_RISK',
+        rule: 'Section 4(1) Lagos State Tenancy Law 2011',
+        issue: 'Demanding or receiving advance rent exceeding 1 year for a yearly tenant is illegal.',
+        recommendation: 'Amend clause to 1 year advance rent payable on execution.',
+      });
+      riskScore -= 30;
     }
 
-    const { data: contract, error: contractErr } = await supabaseAdmin
+    if (lower.includes('unlimited liability') || lower.includes('indemnify without limit')) {
+      riskFlags.push({
+        type: 'HIGH_RISK',
+        rule: 'CAMA 2020 Commercial Standard',
+        issue: 'Unlimited indemnification poses severe financial exposure.',
+        recommendation: 'Cap aggregate liability to 100% of fees paid over preceding 12 months.',
+      });
+      riskScore -= 25;
+    }
+
+    // 5. Store parsed contract record
+    const { data: contract, error: insertErr } = await supabaseAdmin
       .from('contracts')
       .insert({
         user_id: userId,
-        title: file.name.replace(/\.[^/.]+$/, ''),
-        contract_type: contractType,
-        counterparty: isTenancy ? 'Lagos Property Counterparty' : 'Commercial Counterparty',
-        status: riskFlags.length > 0 ? 'FLAGGED' : 'ACTIVE',
-        risk_score: Math.min(riskScore, 100),
-        metadata: {
-          governingLaw,
-          risk_flags: riskFlags,
-          rawDraft: extractedText,
-          autoParsed: true
-        }
+        title,
+        counterparty,
+        domain_category: domain,
+        content: extractedText,
+        risk_score: riskScore,
+        risk_flags: riskFlags,
+        status: 'ACTIVE',
+        governing_law: 'Laws of the Federal Republic of Nigeria',
+        created_at: new Date().toISOString(),
       })
       .select()
       .single();
 
-    if (contractErr) throw contractErr;
+    if (insertErr) throw insertErr;
 
-    if (isTenancy && contract) {
-      await supabaseAdmin.from('obligations').insert({
-        contract_id: contract.id,
-        user_id: userId,
-        title: 'Statutory 6-Month Notice Window',
-        description: 'Lagos Tenancy Law 2011 Section 13 notice window prior to lease expiration.',
-        due_date: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        obligation_type: 'NOTICE',
-        status: 'PENDING'
-      });
-    }
+    // 6. Automatically schedule notice obligation if expiration detected
+    const autoObligationDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    await supabaseAdmin.from('obligations').insert({
+      contract_id: contract.id,
+      title: `Statutory Determination Notice: ${title}`,
+      due_date: autoObligationDate.toISOString(),
+      status: 'PENDING',
+      description: 'Review statutory notice window prior to automatic renewal or expiration.',
+    });
 
     return NextResponse.json({
       success: true,
       contractId: contract.id,
-      title: contract.title,
-      riskFlagsCount: riskFlags.length,
-      complianceScore: 100 - contract.risk_score
+      riskScore,
+      riskFlags,
+      currentUsage: (count ?? 0) + 1,
+      maxContracts: limits.maxContracts,
     });
-
-  } catch (error: any) {
-    console.error('Ingestion parse error:', error);
-    return NextResponse.json({ error: error.message || 'Internal parsing error' }, { status: 500 });
+  } catch (err: any) {
+    console.error('Ingestion error:', err.message);
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import './globals.css';
 import { Inter } from 'next/font/google';
 import { AuthProvider } from '@/context/AuthContext';
 import AppShell from '@/components/AppShell';
+import DevTierSwitcher from '@/components/DevTierSwitcher';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -22,6 +23,7 @@ export default function RootLayout({
           <AppShell>
             {children}
           </AppShell>
+          <DevTierSwitcher />
         </AuthProvider>
       </body>
     </html>
