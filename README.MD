@@ -27,7 +27,7 @@
 | :--- | :--- |
 | **Frontend** | Next.js (App Router), TypeScript, Tailwind CSS, Lucide Icons, jsPDF |
 | **Backend** | Node.js, Express.js, TypeScript |
-| **AI / LLM Engine** | Groq (`llama-3.3-70b-versatile`) |
+| **AI / LLM Engine** | Groq (`llama-3.3-70b-versatile`) QoreBit |
 | **Database & Auth** | Supabase (PostgreSQL) |
 
 ---
