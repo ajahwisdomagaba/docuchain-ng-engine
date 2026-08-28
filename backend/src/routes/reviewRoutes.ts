@@ -1,19 +1,130 @@
 import { Router } from 'express';
 import multer from 'multer';
-import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import { auditCommercialContract } from '../services/aiReviewService';
 import { supabase } from '../lib/supabase';
+import { ContractParser } from '../services/parser.service';
 
 const router = Router();
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
+const parser = new ContractParser();
 
-// Helper to extract text from files
+// Multi-turn Interactive AI Contract Q&A with Memory & Robust Fallback
+router.post('/qa', async (req, res) => {
+  try {
+    const { contractText, question, governingLaw, history = [] } = req.body;
+
+    if (!contractText || (!question && history.length === 0)) {
+      return res.status(400).json({ error: 'contractText and question/history are required.' });
+    }
+
+const systemPrompt = `
+You are DocuChain NG Contract AI Assistant, an authoritative Nigerian legal intelligence co-pilot.
+Your task is to maintain a continuous, conversational legal dialogue regarding the provided contract.
+
+APPLY THE LAWS OF THE FEDERAL REPUBLIC OF NIGERIA:
+- Constitution of the Federal Republic of Nigeria (as amended).
+- Companies and Allied Matters Act (CAMA) 2020 (including Section 102 execution rules).
+- Labour Act (Cap L1 LFN 2004) & National Minimum Wage Act (statutory baseline: NGN 70,000/month; salaries below this baseline violate federal statutory thresholds).
+- Arbitration and Mediation Act 2023 (repealed and replaced the ACA 1988 / Cap A18 LFN 2004).
+- Nigeria Data Protection Act (NDPA) 2023 (principles of lawful processing, consent, and cross-border transfer requirements).
+- Evidence Act, Land Use Act, and applicable tax legislation (e.g., Withholding Tax & FIRS regulations).
+- Applicable State enactments (e.g., Lagos State Tenancy Law 2011 Section 4 restricting advance rent to 1 year for yearly tenants, Section 13 notice requirements). Do not assume Lagos State law unless the contract or user indicates Lagos or another specific State.
+
+INSTRUCTIONS:
+1. Apply current Nigerian statutory standards decisively without mentioning knowledge cutoffs or training dates.
+2. Maintain conversation context and treat follow-up questions as referring to the active contract.
+3. Plain English First: Explain clause implications plainly before presenting statutory analysis.
+4. Detect Legal Risks: Flag clauses that are illegal, unenforceable, ambiguous, unfair, or inconsistent with Nigerian statutes.
+5. Distinguish Mandates: Clearly separate mandatory statutory requirements from contractual terms and best practice recommendations.
+6. Identify Missing Terms: Highlight critical statutory or commercial clauses absent from the draft.
+7. Silent Issues: If the document is silent on an issue, note that it is unaddressed and provide the Nigerian default statutory position.
+8. State Assumptions: If applicable law turns on missing facts (State jurisdiction, worker vs contractor status, corporate capacity), state the assumption briefly.
+9. Factual Accuracy: Never fabricate clauses or statutory sections.
+10. Return a strictly valid JSON object matching this schema:
+{
+  "answer": "Direct, plain-English and authoritative legal assessment under Nigerian law",
+  "citation": "Exact contract clause and applicable Nigerian statute/section"
+}
+Return ONLY the raw JSON object without markdown formatting, code blocks, or extra text.
+`;
+
+// Map conversation history
+    const formattedHistory = history.map((msg: { sender: 'ai' | 'user'; text: string }) => ({
+      role: msg.sender === 'user' ? 'user' : 'assistant',
+      content: msg.text,
+    }));
+
+    const conversationPayload = [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: `[CONTRACT CONTEXT]\nGoverning Law: ${governingLaw || 'Laws of the Federal Republic of Nigeria'}\n\nDocument Text:\n${contractText.slice(0, 32000)}`,
+      },
+      ...formattedHistory,
+      { role: 'user', content: question },
+    ];
+
+    const response = await fetch('https://api.qorebit.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ'}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: conversationPayload,
+        temperature: 0.2,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Qorebit AI failed (${response.status}): ${errText}`);
+    }
+
+    const data: any = await response.json();
+    let content: string = data.choices?.[0]?.message?.content || '{}';
+
+    // Robust JSON extract
+    content = content.trim();
+    if (content.includes('{') && content.includes('}')) {
+      const start = content.indexOf('{');
+      const end = content.lastIndexOf('}');
+      content = content.substring(start, end + 1);
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      parsed = {
+        answer: content.replace(/```json|```/g, '').trim(),
+        citation: '',
+      };
+    }
+
+    return res.status(200).json({
+      success: true,
+      answer: parsed.answer || 'How else can I assist with this contract audit?',
+      citation: parsed.citation || '',
+    });
+  } catch (error: any) {
+    console.error('Contract Q&A Route Error:', error.message || error);
+    return res.status(500).json({
+      error: 'Failed to answer contract question.',
+      fallbackAnswer: 'An error occurred while analyzing the contract. Please try again.',
+    });
+  }
+});
+
+// Helper to extract text from files (uses ContractParser with OCR fallback)
 async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
   const ext = file.originalname.split('.').pop()?.toLowerCase();
+
   if (ext === 'pdf') {
-    const data = await pdfParse(file.buffer);
-    return data.text;
+    const parseResult = await parser.parseDocument(file.buffer, 'application/pdf');
+    return parseResult.text;
   } else if (ext === 'docx') {
     const result = await mammoth.extractRawText({ buffer: file.buffer });
     return result.value;
@@ -25,66 +136,89 @@ async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
 // Helper to save audit result into Supabase PostgreSQL
 async function saveAuditToSupabase(title: string, rawText: string, auditData: any) {
   try {
-    const category = auditData.contractCategory || 'TENANCY';
-    const counterparty = auditData.parties?.disclosingOrClient || 'Counterparty Entity';
-    const overallScore = auditData.overallScore || 65;
-    const riskFlagsCount = auditData.riskFlags?.length || 0;
-    const status = riskFlagsCount > 0 ? 'Flagged' : 'Audited';
+    const contractType = auditData.category || auditData.contractCategory || 'COMMERCIAL';
+    const counterparty = auditData.counterparty || 'Counterparty Entity';
+    const overallScore = typeof auditData.overallScore === 'number' ? auditData.overallScore : 70;
+    const riskScore = typeof auditData.overallScore === 'number' ? Math.max(0, 100 - auditData.overallScore) : 30;
+    const riskFlags = auditData.riskFlags || [];
+    const status = riskFlags.length > 0 ? 'Flagged' : 'Audited';
 
-    // 1. Insert Contract Record
+    const metadataPayload = {
+      rawDraft: rawText,
+      extractedText: rawText,
+      originalFileName: title,
+      batchUploaded: true,
+      risk_flags: riskFlags,
+      overallScore,
+      riskScore,
+      governingLaw: auditData.governingLaw || 'Laws of the Federal Republic of Nigeria',
+      summary: auditData.executiveSummary || '',
+      category: contractType,
+      counterparty,
+      governing_statutes: [
+        'CAMA 2020',
+        'NDPA 2023',
+        'Arbitration and Mediation Act 2023',
+        'National Minimum Wage Act 2024',
+        'Labour Act (Cap L1 LFN 2004)',
+        'Lagos State Tenancy Law 2011',
+      ],
+    };
+
+    // Primary Contract Insert (Strictly mapped to verified contracts schema)
     const { data: contract, error: contractErr } = await supabase
       .from('contracts')
       .insert({
         title,
-        category,
+        contract_type: contractType,
         counterparty,
-        governing_law: auditData.governingLaw || 'Laws of the Federal Republic of Nigeria',
-        overall_score: overallScore,
         status,
-        raw_text: rawText,
+        risk_score: riskScore,
+        metadata: metadataPayload,
       })
       .select()
       .single();
 
-    if (contractErr) throw contractErr;
-
-    // 2. Insert Risk Flags / Statutory Deviations
-    if (auditData.riskFlags && auditData.riskFlags.length > 0) {
-      const riskRows = auditData.riskFlags.map((risk: any) => ({
-        contract_id: contract.id,
-        clause_title: risk.clauseTitle,
-        badge_label: risk.legalBasis || 'Statutory Non-Compliance',
-        risk_level: risk.riskLevel || 'HIGH',
-        original_text: risk.originalText,
-        recommended_redline: risk.recommendedRedline,
-        legal_basis: risk.legalBasis,
-        plain_english_explanation: risk.plainEnglishExplanation,
-      }));
-
-      await supabase.from('risk_flags').insert(riskRows);
+    if (contractErr) {
+      console.error('❌ Supabase contracts insert error:', contractErr);
+      return {
+        insertSuccess: false,
+        error: contractErr.message,
+        code: contractErr.code,
+        details: contractErr.details,
+        hint: contractErr.hint,
+      };
     }
 
-    // 3. Auto-calculate and Insert Statutory Obligation (e.g., 6-month notice for Tenancy)
-    if (category === 'TENANCY') {
-      const defaultDueDate = new Date();
-      defaultDueDate.setMonth(defaultDueDate.getMonth() + 6); // 6 months statutory countdown
+    console.log('✅ Contract saved to Supabase with ID:', contract.id);
 
-      await supabase.from('obligations').insert({
-        contract_id: contract.id,
-        contract_title: title,
-        category,
-        counterparty,
-        obligation_type: 'Statutory Notice to Quit',
-        due_date: defaultDueDate.toISOString().split('T')[0],
-        statutory_rule: 'Section 13 Lagos State Tenancy Law 2011 (6-Month Notice)',
-        status: 'Upcoming',
-      });
+    // Relational risk flags insert
+    if (contract?.id && riskFlags.length > 0) {
+      try {
+        const riskRows = riskFlags.map((risk: any) => ({
+          contract_id: contract.id,
+          clause_title: risk.clauseTitle || 'Statutory Deviation',
+          badge_label: risk.badgeLabel || risk.legalBasis || 'Statute Violation',
+          risk_level: risk.riskLevel || 'HIGH',
+          original_text: risk.originalText || '',
+          recommended_redline: risk.recommendedRedline || '',
+          legal_basis: risk.legalBasis || 'Nigerian Statutory Framework',
+          plain_english_explanation: risk.plainEnglishExplanation || risk.issue || '',
+        }));
+
+        const { error: flagErr } = await supabase.from('risk_flags').insert(riskRows);
+        if (flagErr) {
+          console.warn('⚠️ risk_flags table insert warning:', flagErr.message);
+        }
+      } catch (flagErr: any) {
+        console.warn('⚠️ risk_flags table insert error:', flagErr.message);
+      }
     }
 
     return contract;
-  } catch (err) {
-    console.error('Failed to persist audit in Supabase:', err);
-    return null;
+  } catch (err: any) {
+    console.error('❌ Failed to persist audit in Supabase:', err.message || err);
+    return { insertSuccess: false, error: err.message || String(err) };
   }
 }
 
@@ -113,14 +247,12 @@ router.post('/audit', async (req, res) => {
     }
 
     const auditResult = await auditCommercialContract(contractText, category);
-    
-    // Save to database
     const savedContract = await saveAuditToSupabase(title || 'Audited Agreement', contractText, auditResult);
 
-    return res.status(200).json({ 
-      success: true, 
+    return res.status(200).json({
+      success: true,
       data: auditResult,
-      dbRecord: savedContract 
+      dbRecord: savedContract,
     });
   } catch (error: any) {
     console.error('Commercial Audit Error:', error);
@@ -139,7 +271,9 @@ router.post('/batch-audit', upload.array('files', 10), async (req, res) => {
     const auditPromises = files.map(async (file) => {
       try {
         const text = await extractTextFromFile(file);
-        if (!text || text.trim().length === 0) return { filename: file.originalname, success: false };
+        if (!text || text.trim().length === 0) {
+          return { filename: file.originalname, success: false, error: 'Empty file text.' };
+        }
 
         const auditData = await auditCommercialContract(text);
         const title = file.originalname.replace(/\.[^/.]+$/, '');

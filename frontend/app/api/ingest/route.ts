@@ -9,16 +9,20 @@ const supabaseAdmin = createClient(
 );
 
 export function extractValidJson(raw: string): any {
-  const firstBrace = raw.indexOf('{');
-  const lastBrace = raw.lastIndexOf('}');
+  if (!raw || typeof raw !== 'string') return null;
+
+  // Strip Markdown code blocks if present
+  let clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+  const firstBrace = clean.indexOf('{');
+  const lastBrace = clean.lastIndexOf('}');
 
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    const jsonSubstring = raw.substring(firstBrace, lastBrace + 1);
+    const jsonSubstring = clean.substring(firstBrace, lastBrace + 1);
     return JSON.parse(jsonSubstring);
   }
 
-  // Fallback cleanup
-  return JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim());
+  return JSON.parse(clean);
 }
 
 export async function POST(req: NextRequest) {
@@ -36,31 +40,52 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Extracted contract text is empty' }, { status: 400 });
     }
 
-    // 1. Run Nigerian Statutory Analysis via Qorebit AI
-    const rawAiOutput = await generateContractAnalysis({
-      systemPrompt: NIGERIAN_STATUTORY_AUDITOR_PROMPT,
-      userPrompt: extractedText,
-      temperature: 0.1,
-      jsonMode: true,
-    });
+    // 1. Run Nigerian Statutory Analysis via AI
+    let rawAiOutput: any;
+    try {
+      rawAiOutput = await generateContractAnalysis({
+        systemPrompt: NIGERIAN_STATUTORY_AUDITOR_PROMPT,
+        userPrompt: `Audit this Nigerian contract for statutory compliance (CAMA 2020, Lagos Tenancy Law 2011, Labour Act, NDPA 2023, Arbitration and Mediation Act 2023):\n\n${extractedText}`,
+        temperature: 0.1,
+        jsonMode: true,
+      });
+    } catch (aiErr: any) {
+      console.error('[DocuChain Ingest] AI Generation failed:', aiErr.message);
+    }
 
     // 2. Safely parse JSON bounded between { and }
-    let auditData: any = {};
-    try {
-      auditData = extractValidJson(rawAiOutput);
-    } catch (parseErr) {
-      console.warn('AI Output JSON Parse Error. Raw Output:', rawAiOutput);
+    let auditData: any = null;
+    if (rawAiOutput) {
+      try {
+        auditData = extractValidJson(
+          typeof rawAiOutput === 'string' ? rawAiOutput : JSON.stringify(rawAiOutput)
+        );
+      } catch (parseErr) {
+        console.warn('[DocuChain Ingest] AI Output JSON Parse Error. Raw Output:', rawAiOutput);
+      }
+    }
+
+    // Fallback if AI response failed to parse or execute
+    if (!auditData || !auditData.compliance_score) {
       auditData = {
-        compliance_score: 75,
-        contract_type: 'General Commercial Agreement',
-        governing_statutes_identified: ['CAMA 2020'],
-        summary: rawAiOutput.slice(0, 300),
-        critical_risks: [],
+        compliance_score: 50,
+        contract_type: 'Commercial Agreement',
+        governing_statutes_identified: ['CAMA 2020', 'Labour Act'],
+        summary: typeof rawAiOutput === 'string' ? rawAiOutput.slice(0, 300) : 'Contract processed.',
+        critical_risks: [
+          {
+            clause_reference: 'Audit Warning',
+            statute_violated: 'Nigerian Law Engine',
+            issue: 'Automated audit requires re-evaluation or manual review.',
+            severity: 'MEDIUM',
+            remediation: 'Inspect document clauses manually.'
+          }
+        ],
         statutory_obligations: [],
       };
     }
 
-    const calculatedRiskScore = Math.max(0, 100 - (auditData.compliance_score || 80));
+    const calculatedRiskScore = Math.max(0, 100 - Number(auditData.compliance_score || 70));
 
     // 3. Update or Insert Contract Record in Supabase
     let finalContractId = contractId;
@@ -69,6 +94,8 @@ export async function POST(req: NextRequest) {
       const { error: updateError } = await supabaseAdmin
         .from('contracts')
         .update({
+          content: extractedText,
+          raw_text: extractedText,
           risk_score: calculatedRiskScore,
           risk_flags: auditData.critical_risks || [],
           domain_category: auditData.contract_type || 'Commercial',
@@ -91,6 +118,7 @@ export async function POST(req: NextRequest) {
           title: title || 'Untitled Agreement',
           counterparty: counterparty || 'Counterparty',
           content: extractedText,
+          raw_text: extractedText,
           risk_score: calculatedRiskScore,
           risk_flags: auditData.critical_risks || [],
           domain_category: auditData.contract_type || 'Commercial',
@@ -108,7 +136,7 @@ export async function POST(req: NextRequest) {
       finalContractId = newContract.id;
     }
 
-    // 4. Auto-schedule statutory obligations if identified by the AI
+    // 4. Auto-schedule statutory obligations if identified
     if (auditData.statutory_obligations && Array.isArray(auditData.statutory_obligations) && finalContractId) {
       const obligationsToInsert = auditData.statutory_obligations.map((ob: any) => ({
         contract_id: finalContractId,

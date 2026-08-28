@@ -1,30 +1,27 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Upload, FileText, Sparkles, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ReviewResult } from '@/lib/api';
 
 interface UploadDropzoneProps {
-  onAuditComplete: (result: ReviewResult) => void;
+  onAuditComplete?: (result: any) => void;
 }
 
 const DEFAULT_SAMPLE_TEXT = `THIS TENANCY AGREEMENT is made between Chief Adebayo (Landlord) and Emeka Obi (Tenant) for a 2-bedroom flat in Surulere, Lagos. The tenant agrees to pay two (2) years rent in advance at ₦1,500,000 per annum. The tenancy is yearly, commencing January 1, 2026. Either party may terminate by giving 1 month notice.`;
 
 export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
-  const [activeTab, setActiveTab] = useState<'upload' | 'text'>('text');
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<'upload' | 'text'>('upload');
   const [text, setText] = useState(DEFAULT_SAMPLE_TEXT);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = async (selectedFile: File) => {
+  const handleFile = (selectedFile: File) => {
     setFile(selectedFile);
-    if (selectedFile.type === 'text/plain' || selectedFile.name.endsWith('.txt')) {
-      const content = await selectedFile.text();
-      setText(content);
-    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -36,25 +33,53 @@ export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
   };
 
   const handleAudit = async () => {
-    let payloadText = text;
-
-    if (activeTab === 'upload' && file && (!payloadText || payloadText === DEFAULT_SAMPLE_TEXT)) {
-      payloadText = await file.text();
-    }
-
-    if (!payloadText.trim()) return;
-
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:3000/api/review', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documentText: payloadText }),
-      });
 
-      if (!res.ok) throw new Error('Audit processing failed');
-      const data: ReviewResult = await res.json();
-      onAuditComplete(data);
+      // Mode 1: Binary File Upload (.pdf, .docx, .txt) via FormData
+      if (activeTab === 'upload' && file) {
+        const formData = new FormData();
+        formData.append('files', file);
+
+        const res = await fetch('http://localhost:5000/api/review/batch-audit', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) throw new Error(`Audit batch upload failed: ${res.status}`);
+        const data = await res.json();
+
+        if (onAuditComplete) onAuditComplete(data);
+
+        // Redirect to newly created Supabase Contract record
+        const newContractId = data.results?.[0]?.dbRecord?.id;
+        if (newContractId) {
+          router.push(`/contracts/${newContractId}`);
+        }
+      } 
+      // Mode 2: Raw Text Audit via JSON payload
+      else if (activeTab === 'text' && text.trim()) {
+        const res = await fetch('http://localhost:5000/api/review/audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contractText: text,
+            title: 'Pasted Agreement Review',
+            category: 'COMMERCIAL',
+          }),
+        });
+
+        if (!res.ok) throw new Error(`Text audit failed: ${res.status}`);
+        const data = await res.json();
+
+        if (onAuditComplete) onAuditComplete(data);
+
+        // Redirect to newly created Supabase Contract record
+        const newContractId = data.dbRecord?.id;
+        if (newContractId) {
+          router.push(`/contracts/${newContractId}`);
+        }
+      }
     } catch (err) {
       console.error('Audit execution error:', err);
     } finally {
@@ -92,7 +117,7 @@ export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
         </div>
 
         <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-md">
-          Lagos Tenancy 2011 Active
+          Nigerian Statutory Compliance Engine
         </span>
       </div>
 
@@ -140,10 +165,7 @@ export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setFile(null);
-                  setText(DEFAULT_SAMPLE_TEXT);
-                }}
+                onClick={() => setFile(null)}
                 className="text-slate-500 hover:text-slate-300 p-1"
               >
                 <X className="h-4 w-4" />
@@ -156,7 +178,7 @@ export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Paste tenancy agreement clauses, notice terms, or full draft text here..."
+          placeholder="Paste commercial agreement clauses, employment terms, or tenancy drafts here..."
           className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none leading-relaxed"
         />
       )}
@@ -165,12 +187,12 @@ export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
       <div className="mt-4 flex justify-end">
         <Button
           onClick={handleAudit}
-          disabled={loading || (!text.trim() && !file)}
+          disabled={loading || (activeTab === 'upload' ? !file : !text.trim())}
           className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-5 py-2.5 rounded-lg flex items-center gap-2 shadow-xs transition-all disabled:opacity-50"
         >
           {loading ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" /> Auditing Clauses...
+              <Loader2 className="h-4 w-4 animate-spin" /> Auditing Clauses against Nigerian Law...
             </>
           ) : (
             <>

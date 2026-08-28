@@ -37,7 +37,7 @@ interface DashboardMetrics {
 export default function DashboardPage() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [currentTier, setCurrentTier] = useState<PlanTier>('FREE');
+  const [currentTier, setCurrentTier] = useState<PlanTier>('LEGAL_TEAM');
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     totalContracts: 0,
     avgComplianceScore: 100,
@@ -48,7 +48,7 @@ export default function DashboardPage() {
   const [recentContracts, setRecentContracts] = useState<any[]>([]);
   const [upcomingObligations, setUpcomingObligations] = useState<any[]>([]);
 
-  const permissions: PlanLimits = PLAN_PERMISSIONS[currentTier] || PLAN_PERMISSIONS.FREE;
+  const permissions: PlanLimits = PLAN_PERMISSIONS[currentTier] || PLAN_PERMISSIONS.LEGAL_TEAM;
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -60,56 +60,72 @@ export default function DashboardPage() {
           currentUserId = authData?.user?.id;
         }
 
-        if (!currentUserId) {
-          setLoading(false);
-          return;
+        // 1. Fetch Subscription Tier if user is present
+        if (currentUserId) {
+          const { data: sub } = await supabase
+            .from('subscriptions')
+            .select('plan_tier')
+            .eq('user_id', currentUserId)
+            .eq('status', 'ACTIVE')
+            .maybeSingle();
+
+          if (sub?.plan_tier) {
+            setCurrentTier(sub.plan_tier as PlanTier);
+          }
         }
 
-        // 1. Fetch Subscription Tier
-        const { data: sub } = await supabase
-          .from('subscriptions')
-          .select('plan_tier')
-          .eq('user_id', currentUserId)
-          .eq('status', 'ACTIVE')
-          .single();
-
-        if (sub?.plan_tier) {
-          setCurrentTier(sub.plan_tier as PlanTier);
-        }
-
-        // 2. Fetch User Contracts
-        const { data: contractsData } = await supabase
+        // 2. Fetch All Available Contracts and Risk Flags
+        const { data: contractsData, error: contractsErr } = await supabase
           .from('contracts')
-          .select('*')
-          .eq('user_id', currentUserId)
+          .select('*, risk_flags(*)')
           .order('created_at', { ascending: false });
 
-        // 3. Fetch User Obligations
-        const { data: obligationsData } = await supabase
+        if (contractsErr) {
+          console.warn('Contracts fetch error:', contractsErr.message);
+        }
+
+        // 3. Fetch All Pending Obligations
+        const { data: obligationsData, error: obsErr } = await supabase
           .from('obligations')
           .select('*, contracts:contract_id(title, counterparty, user_id)')
           .order('due_date', { ascending: true });
 
-        const userObligations = obligationsData?.filter(
-          (o) => o.contracts?.user_id === currentUserId
-        ) || [];
+        if (obsErr) {
+          console.warn('Obligations fetch error:', obsErr.message);
+        }
 
         if (contractsData && contractsData.length > 0) {
           const total = contractsData.length;
-          const totalScore = contractsData.reduce(
-            (acc, curr) => acc + (100 - (curr.risk_score || 0)),
-            0
-          );
+          let totalScore = 0;
+          let totalFlags = 0;
+
+          contractsData.forEach((c) => {
+            let meta = c.metadata;
+            if (typeof meta === 'string') {
+              try { meta = JSON.parse(meta); } catch { meta = {}; }
+            }
+
+            // Calculate Score
+            let score = 75;
+            if (typeof c.risk_score === 'number') {
+              score = Math.max(0, 100 - c.risk_score);
+            } else if (typeof c.overall_score === 'number') {
+              score = c.overall_score;
+            } else if (typeof meta?.overallScore === 'number') {
+              score = meta.overallScore;
+            }
+            totalScore += score;
+
+            // Count Flags
+            const flags = Array.isArray(c.risk_flags) && c.risk_flags.length > 0
+              ? c.risk_flags.length
+              : (Array.isArray(meta?.risk_flags) ? meta.risk_flags.length : 0);
+            totalFlags += flags;
+          });
+
           const avgScore = Math.round(totalScore / total);
-
-          const totalFlags = contractsData.reduce((acc, curr) => {
-            const flags = Array.isArray(curr.metadata?.risk_flags)
-              ? curr.metadata.risk_flags.length
-              : (curr.risk_score > 30 ? 2 : 0);
-            return acc + flags;
-          }, 0);
-
-          const pendingObs = userObligations.filter((o) => o.status === 'PENDING');
+          const allObs = obligationsData || [];
+          const pendingObs = allObs.filter((o) => o.status === 'PENDING' || !o.status);
           const statutoryNotices = pendingObs.filter((o) => o.obligation_type === 'NOTICE');
 
           setMetrics({
@@ -120,12 +136,12 @@ export default function DashboardPage() {
             statutoryNoticesCount: statutoryNotices.length,
           });
 
-          setRecentContracts(contractsData.slice(0, 4));
+          setRecentContracts(contractsData.slice(0, 5));
         }
 
-        if (userObligations.length > 0) {
+        if (obligationsData && obligationsData.length > 0) {
           setUpcomingObligations(
-            userObligations.filter((o) => o.status === 'PENDING').slice(0, 3)
+            obligationsData.filter((o) => o.status === 'PENDING' || !o.status).slice(0, 3)
           );
         }
       } catch (err: any) {
@@ -250,26 +266,38 @@ export default function DashboardPage() {
             {recentContracts.length === 0 ? (
               <div className="py-8 text-center text-xs text-slate-500">No contracts uploaded yet. Ingest a document in the vault to view metrics.</div>
             ) : (
-              recentContracts.map((c) => (
-                <div key={c.id} className="p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <div className="text-xs font-semibold text-white truncate max-w-xs">{c.title}</div>
-                    <div className="text-[11px] text-slate-400">Party: {c.counterparty || 'Counterparty'}</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-mono text-slate-300 font-medium">
-                      {100 - (c.risk_score || 0)}/100
-                    </span>
-                    <Badge variant="outline" className={`text-[10px] ${
-                      (c.risk_score || 0) > 30 
-                        ? 'border-rose-500/40 text-rose-400 bg-rose-500/10' 
-                        : 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
-                    }`}>
-                      {(c.risk_score || 0) > 30 ? 'High Risk' : 'Compliant'}
-                    </Badge>
-                  </div>
-                </div>
-              ))
+              recentContracts.map((c) => {
+                let score = 75;
+                if (typeof c.risk_score === 'number') score = Math.max(0, 100 - c.risk_score);
+                else if (typeof c.overall_score === 'number') score = c.overall_score;
+
+                const isHighRisk = (c.risk_score || 0) > 30 || score < 70;
+
+                return (
+                  <Link 
+                    key={c.id} 
+                    href={`/contracts/${c.id}`}
+                    className="p-3 bg-slate-950/60 hover:bg-slate-800/40 transition-colors rounded-lg border border-slate-800/80 flex items-center justify-between"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-semibold text-white truncate max-w-xs">{c.title || 'Untitled Agreement'}</div>
+                      <div className="text-[11px] text-slate-400">Party: {c.counterparty || 'Counterparty'}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-slate-300 font-medium">
+                        {score}/100
+                      </span>
+                      <Badge variant="outline" className={`text-[10px] ${
+                        isHighRisk
+                          ? 'border-rose-500/40 text-rose-400 bg-rose-500/10' 
+                          : 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+                      }`}>
+                        {isHighRisk ? 'Flagged' : 'Compliant'}
+                      </Badge>
+                    </div>
+                  </Link>
+                );
+              })
             )}
           </div>
         </div>
