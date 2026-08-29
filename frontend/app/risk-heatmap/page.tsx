@@ -30,13 +30,13 @@ export default function RiskHeatmapPage() {
   const [contracts, setContracts] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>('ALL');
-  const [selectedFramework, setSelectedFramework] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
     async function loadPortfolioData() {
       setLoading(true);
       try {
+        // 1. Fetch contracts with nested risk flags and client info
         const { data: contractData, error } = await supabase
           .from('contracts')
           .select('*, risk_flags(*), workspace_clients(id, client_name, client_type)')
@@ -45,6 +45,7 @@ export default function RiskHeatmapPage() {
         if (error) throw error;
         setContracts(contractData || []);
 
+        // 2. Fetch clients
         const { data: clientData } = await supabase
           .from('workspace_clients')
           .select('id, client_name, client_type')
@@ -69,21 +70,11 @@ export default function RiskHeatmapPage() {
         c.title.toLowerCase().includes(q) ||
         (c.counterparty || '').toLowerCase().includes(q) ||
         (c.contract_type || '').toLowerCase().includes(q);
-
-      let matchesFramework = true;
-      if (selectedFramework !== 'ALL') {
-        const flags = (c.risk_flags || []).filter((f: any) => f.status !== 'RESOLVED');
-        const combinedText = (c.contract_type + ' ' + flags.map((f: any) => `${f.clause_title} ${f.legal_basis}`).join(' ')).toLowerCase();
-        if (selectedFramework === 'TENANCY') matchesFramework = combinedText.includes('tenancy') || combinedText.includes('rent') || combinedText.includes('notice');
-        if (selectedFramework === 'CAMA') matchesFramework = combinedText.includes('cama') || combinedText.includes('section 102') || combinedText.includes('seal');
-        if (selectedFramework === 'LABOUR') matchesFramework = combinedText.includes('labour') || combinedText.includes('wage') || combinedText.includes('salary');
-      }
-
-      return matchesClient && matchesSearch && matchesFramework;
+      return matchesClient && matchesSearch;
     });
-  }, [contracts, selectedClientId, selectedFramework, searchQuery]);
+  }, [contracts, selectedClientId, searchQuery]);
 
-  // Aggregate Metrics (Unresolved Violations Only)
+  // Aggregate Metrics
   const metrics = useMemo(() => {
     let highRiskCount = 0;
     let totalRiskFlags = 0;
@@ -101,21 +92,21 @@ export default function RiskHeatmapPage() {
       const riskScore = c.risk_score || 0;
       if (riskScore >= 40) highRiskCount++;
 
-      // Only count active/open risk flags that haven't been resolved
-      const allFlags = c.risk_flags || [];
-      const openFlags = allFlags.filter((f: any) => f.status !== 'RESOLVED');
-      totalRiskFlags += openFlags.length;
+      const flags = c.risk_flags || [];
+      totalRiskFlags += flags.length;
 
+      // Category breakdown
       const type = c.contract_type || 'COMMERCIAL';
       categoryBreakdown[type] = (categoryBreakdown[type] || 0) + 1;
 
+      // Counterparty risk mapping
       const cp = c.counterparty || 'Unknown Entity';
       if (!counterpartyRisks[cp]) counterpartyRisks[cp] = { count: 0, totalRiskScore: 0 };
       counterpartyRisks[cp].count += 1;
       counterpartyRisks[cp].totalRiskScore += riskScore;
 
       // Statutory violations analysis
-      openFlags.forEach((f: any) => {
+      flags.forEach((f: any) => {
         const text = `${f.clause_title || ''} ${f.legal_basis || ''} ${f.issue_summary || ''}`.toLowerCase();
         if (text.includes('tenancy') || text.includes('rent') || text.includes('notice to quit')) statuteBreakdown.lagosTenancy++;
         if (text.includes('labour') || text.includes('minimum wage') || text.includes('salary')) statuteBreakdown.labourWage++;
@@ -152,7 +143,7 @@ export default function RiskHeatmapPage() {
           <div>
             <div className="flex items-center gap-2">
               <Flame className="w-6 h-6 text-rose-500" />
-              <h1 className="text-2xl font-bold tracking-tight text-white">Statutory Risk Heatmap Matrix</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio Risk Heatmap</h1>
               <Badge className="bg-rose-500/10 text-rose-400 border-rose-500/30 text-xs">Statutory Exposure</Badge>
             </div>
             <p className="text-slate-400 text-xs mt-1">
@@ -160,76 +151,31 @@ export default function RiskHeatmapPage() {
             </p>
           </div>
 
-          {/* Client Vault Selector Dropdown */}
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 shadow-sm">
-              <Building2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <select
-                value={selectedClientId}
-                onChange={(e) => setSelectedClientId(e.target.value)}
-                className="bg-transparent border-0 text-xs text-slate-200 focus:outline-none cursor-pointer"
-              >
-                <option value="ALL" className="bg-slate-900 text-slate-100">All Client Vaults (Global Portfolio)</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id} className="bg-slate-900 text-slate-100">
-                    {client.client_name} ({client.client_type})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <Link href="/vault">
-              <Button size="sm" variant="outline" className="border-slate-700 text-xs text-slate-300 hover:text-white">
-                Go to Vault
-              </Button>
-            </Link>
+          {/* Client Filter Selector */}
+          <div className="flex items-center gap-3">
+            <select
+              value={selectedClientId}
+              onChange={(e) => setSelectedClientId(e.target.value)}
+              className="bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-xs text-slate-200"
+            >
+              <option value="ALL">All Client Vaults (Global Portfolio)</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.client_name} ({client.client_type})
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
-
-        {/* Framework Filter Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant={selectedFramework === 'ALL' ? 'default' : 'outline'}
-            onClick={() => setSelectedFramework('ALL')}
-            className={`text-xs h-8 ${selectedFramework === 'ALL' ? 'bg-emerald-600 text-white' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
-          >
-            All Frameworks
-          </Button>
-          <Button
-            size="sm"
-            variant={selectedFramework === 'TENANCY' ? 'default' : 'outline'}
-            onClick={() => setSelectedFramework('TENANCY')}
-            className={`text-xs h-8 ${selectedFramework === 'TENANCY' ? 'bg-emerald-600 text-white' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
-          >
-            Lagos Tenancy Law 2011
-          </Button>
-          <Button
-            size="sm"
-            variant={selectedFramework === 'CAMA' ? 'default' : 'outline'}
-            onClick={() => setSelectedFramework('CAMA')}
-            className={`text-xs h-8 ${selectedFramework === 'CAMA' ? 'bg-emerald-600 text-white' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
-          >
-            CAMA 2020 / Execution
-          </Button>
-          <Button
-            size="sm"
-            variant={selectedFramework === 'LABOUR' ? 'default' : 'outline'}
-            onClick={() => setSelectedFramework('LABOUR')}
-            className={`text-xs h-8 ${selectedFramework === 'LABOUR' ? 'bg-emerald-600 text-white' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
-          >
-            Labour & Minimum Wage Act
-          </Button>
         </div>
 
         {/* Metric Summary Strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-            <span className="text-xs text-slate-400 font-medium block">Audited Agreements</span>
+            <span className="text-xs text-slate-400 font-medium block">Total Audited Agreements</span>
             <div className="text-2xl font-bold text-white mt-1">{filteredContracts.length}</div>
           </div>
           <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-            <span className="text-xs text-rose-400 font-medium block">Critical Statutory Violations</span>
+            <span className="text-xs text-rose-400 font-medium block">High Exposure Contracts</span>
             <div className="text-2xl font-bold text-rose-400 mt-1">{metrics.highRiskCount}</div>
           </div>
           <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
@@ -237,7 +183,7 @@ export default function RiskHeatmapPage() {
             <div className="text-2xl font-bold text-amber-400 mt-1">{metrics.totalRiskFlags}</div>
           </div>
           <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-            <span className="text-xs text-emerald-400 font-medium block">Portfolio Health Score</span>
+            <span className="text-xs text-emerald-400 font-medium block">Average Portfolio Health</span>
             <div className="text-2xl font-bold text-emerald-400 mt-1">
               {filteredContracts.length > 0 
                 ? `${Math.round(100 - (filteredContracts.reduce((acc, c) => acc + (c.risk_score || 0), 0) / filteredContracts.length))}/100` 
@@ -252,7 +198,7 @@ export default function RiskHeatmapPage() {
           <Card className="lg:col-span-7 bg-slate-900/80 border-slate-800">
             <CardHeader className="p-5 border-b border-slate-800">
               <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
-                <Scale className="w-4 h-4 text-emerald-400" /> Nigerian Statutory Non-Compliance Breakdown
+                <Scale className="w-4 h-4 text-emerald-400" /> Nigerian Statutory Non-Compliance Frequency
               </CardTitle>
             </CardHeader>
             <CardContent className="p-5 space-y-4">
@@ -287,7 +233,7 @@ export default function RiskHeatmapPage() {
               {/* CAMA 2020 */}
               <div>
                 <div className="flex justify-between text-xs mb-1">
-                  <span className="text-slate-300 font-medium">CAMA 2020 (Section 102 Corporate Execution & Common Seal)</span>
+                  <span className="text-slate-300 font-medium">CAMA 2020 (Section 102 Corporate Execution & Seals)</span>
                   <span className="text-blue-400 font-bold">{metrics.statuteBreakdown.cama2020} Violations</span>
                 </div>
                 <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
@@ -327,27 +273,21 @@ export default function RiskHeatmapPage() {
                   <tr>
                     <th className="py-3 px-4">Entity</th>
                     <th className="py-3 px-4">Contracts</th>
-                    <th className="py-3 px-4">Avg Risk</th>
+                    <th className="py-3 px-4">Avg Risk Score</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {metrics.sortedCounterparties.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="py-6 text-center text-slate-500">No counterparty data available</td>
+                  {metrics.sortedCounterparties.map((cp, i) => (
+                    <tr key={i} className="hover:bg-slate-800/30">
+                      <td className="py-3 px-4 font-semibold text-white truncate max-w-[150px]">{cp.name}</td>
+                      <td className="py-3 px-4 text-slate-400">{cp.contractsCount} docs</td>
+                      <td className="py-3 px-4">
+                        <Badge className={cp.avgRiskScore >= 40 ? 'bg-rose-500/20 text-rose-400 text-[10px]' : 'bg-amber-500/20 text-amber-400 text-[10px]'}>
+                          {cp.avgRiskScore}% Risk Exposure
+                        </Badge>
+                      </td>
                     </tr>
-                  ) : (
-                    metrics.sortedCounterparties.map((cp, i) => (
-                      <tr key={i} className="hover:bg-slate-800/30">
-                        <td className="py-3 px-4 font-semibold text-white truncate max-w-[150px]">{cp.name}</td>
-                        <td className="py-3 px-4 text-slate-400">{cp.contractsCount} docs</td>
-                        <td className="py-3 px-4">
-                          <Badge className={cp.avgRiskScore >= 40 ? 'bg-rose-500/20 text-rose-400 text-[10px]' : 'bg-amber-500/20 text-amber-400 text-[10px]'}>
-                            {cp.avgRiskScore}% Exposure
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                  ))}
                 </tbody>
               </table>
             </CardContent>
@@ -356,74 +296,44 @@ export default function RiskHeatmapPage() {
 
         {/* High Risk Document Grid */}
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex justify-between items-center">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
-              Exposed Documents & Identified Defects ({filteredContracts.length})
+              High-Risk Document Inventory ({filteredContracts.length})
             </h2>
-            <div className="relative w-full sm:w-64">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-              <Input
-                placeholder="Search contracts or parties..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 bg-slate-900 border-slate-700 text-xs text-slate-100"
-              />
-            </div>
           </div>
 
-          {loading ? (
-            <div className="py-16 flex flex-col items-center justify-center gap-2 text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
-              <p className="text-xs">Analyzing portfolio exposure...</p>
-            </div>
-          ) : filteredContracts.length === 0 ? (
-            <div className="p-12 text-center text-xs text-slate-500 bg-slate-900/30 border border-slate-800 rounded-xl">
-              No contracts found matching your filters.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredContracts.map((c) => {
-                const riskScore = c.risk_score || 0;
-                const isHighRisk = riskScore >= 40;
-                const openViolations = (c.risk_flags || []).filter((f: any) => f.status !== 'RESOLVED');
-                const complianceScore = Math.max(0, 100 - riskScore);
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredContracts.map((c) => {
+              const riskScore = c.risk_score || 0;
+              const isHighRisk = riskScore >= 40;
 
-                return (
-                  <Card key={c.id} className="bg-slate-900/80 border-slate-800 hover:border-slate-700 flex flex-col justify-between">
-                    <CardHeader className="p-4 pb-2 border-b border-slate-800/60">
-                      <div className="flex items-center justify-between">
-                        <Badge className={
-                          openViolations.length === 0 
-                            ? 'bg-emerald-500/20 text-emerald-400 text-[10px]' 
-                            : isHighRisk 
-                            ? 'bg-rose-500/20 text-rose-400 text-[10px]' 
-                            : 'bg-amber-500/20 text-amber-400 text-[10px]'
-                        }>
-                          {openViolations.length === 0 ? '✓ COMPLIANT' : isHighRisk ? 'HIGH RISK' : 'PARTIALLY REDLINED'}
-                        </Badge>
-                        <span className="text-xs font-bold text-white">Score: {complianceScore}/100</span>
-                      </div>
-                      <CardTitle className="text-sm font-bold text-white mt-2 truncate">{c.title}</CardTitle>
-                      <p className="text-xs text-slate-400 truncate">Counterparty: {c.counterparty || 'Entity'}</p>
-                    </CardHeader>
-                    <CardContent className="p-4 space-y-3">
-                      <div className="flex justify-between text-xs text-slate-400">
-                        <span>Active Violations:</span>
-                        <span className={openViolations.length === 0 ? 'font-semibold text-emerald-400' : 'font-semibold text-rose-400'}>
-                          {openViolations.length === 0 ? '0 (All Resolved)' : `${openViolations.length} Open Violations`}
-                        </span>
-                      </div>
-                      <Link href={`/contracts/${c.id}`} className="block pt-2">
-                        <Button variant="outline" size="sm" className="w-full border-slate-700 hover:bg-slate-800 text-slate-200 text-xs flex items-center justify-center gap-1.5">
-                          <ExternalLink className="w-3.5 h-3.5 text-emerald-400" /> Open Interactive Redline Editor
-                        </Button>
-                      </Link>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+              return (
+                <Card key={c.id} className="bg-slate-900/80 border-slate-800 hover:border-slate-700 flex flex-col justify-between">
+                  <CardHeader className="p-4 pb-2 border-b border-slate-800/60">
+                    <div className="flex items-center justify-between">
+                      <Badge className={isHighRisk ? 'bg-rose-500/20 text-rose-400 text-[10px]' : 'bg-emerald-500/20 text-emerald-400 text-[10px]'}>
+                        {isHighRisk ? 'HIGH RISK' : 'LOW RISK'}
+                      </Badge>
+                      <span className="text-xs font-bold text-white">Score: {100 - riskScore}/100</span>
+                    </div>
+                    <CardTitle className="text-sm font-bold text-white mt-2 truncate">{c.title}</CardTitle>
+                    <p className="text-xs text-slate-400 truncate">Counterparty: {c.counterparty || 'Entity'}</p>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex justify-between text-xs text-slate-400">
+                      <span>Flagged Clauses:</span>
+                      <span className="font-semibold text-rose-400">{c.risk_flags?.length || 0} Violations</span>
+                    </div>
+                    <Link href={`/contracts/${c.id}`} className="block pt-2">
+                      <Button variant="outline" size="sm" className="w-full border-slate-700 hover:bg-slate-800 text-slate-200 text-xs flex items-center justify-center gap-1.5">
+                        <ExternalLink className="w-3.5 h-3.5 text-emerald-400" /> Open Interactive Redline Editor
+                      </Button>
+                    </Link>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         </div>
 
       </div>

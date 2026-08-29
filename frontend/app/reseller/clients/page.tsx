@@ -1,482 +1,628 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { 
   Building2, 
-  Users, 
   Plus, 
-  ExternalLink, 
   FolderLock, 
   Sparkles, 
-  Settings, 
-  Search, 
+  ExternalLink, 
   ShieldCheck, 
-  Copy, 
-  Check, 
+  Trash2, 
+  Edit3, 
+  Palette, 
+  FileText, 
+  Settings, 
   Loader2, 
-  ArrowUpRight, 
-  Phone,
-  FileText
+  Check, 
+  X,
+  Users,
+  Scale
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabaseClient';
-import TierFeatureLock from '@/components/TierFeatureLock';
-import { PLAN_PERMISSIONS, PlanTier, PlanLimits } from '@/lib/tierPermissions';
+import { useAuth } from '@/context/AuthContext';
 
-export default function ResellerClientManagerPage() {
+function ResellerClientsContent() {
   const { user } = useAuth();
-  const [currentTier, setCurrentTier] = useState<PlanTier>('FREE');
+  const searchParams = useSearchParams();
+  const workspaceIdParam = searchParams.get('workspaceId');
+
   const [loading, setLoading] = useState(true);
-  const [workspaces, setWorkspaces] = useState<any[]>([]);
-  const [whiteLabel, setWhiteLabel] = useState<any>(null);
+  const [workspace, setWorkspace] = useState<any>(null);
+  const [clients, setClients] = useState<any[]>([]);
+  const [playbooks, setPlaybooks] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'clients' | 'playbooks' | 'branding'>('clients');
 
-  // Modals state
-  const [showNewClientModal, setShowNewClientModal] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
-
-  // Form states
+  // New Client Modal State
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [creatingClient, setCreatingClient] = useState(false);
   const [clientName, setClientName] = useState('');
-  const [clientEmail, setClientEmail] = useState('');
-  const [companyRc, setCompanyRc] = useState('');
-  const [industry, setIndustry] = useState('Real Estate & Commercial Lease');
-  const [savingClient, setSavingClient] = useState(false);
+  const [clientType, setClientType] = useState('CORPORATE');
+  const [contactEmail, setContactEmail] = useState('');
 
-  // White label form
+  // Branding Customization State
+  const [savingBranding, setSavingBranding] = useState(false);
   const [firmName, setFirmName] = useState('');
-  const [brandColor, setBrandColor] = useState('#059669');
-  const [whatsapp, setWhatsapp] = useState('');
-  const [savingBrand, setSavingBrand] = useState(false);
+  const [primaryColor, setPrimaryColor] = useState('#10b981');
+  const [portalSubheading, setPortalSubheading] = useState('');
+  const [supportEmail, setSupportEmail] = useState('');
 
-  const permissions: PlanLimits = PLAN_PERMISSIONS[currentTier] || PLAN_PERMISSIONS.FREE;
+  // Playbook Modal State
+  const [showPlaybookModal, setShowPlaybookModal] = useState(false);
+  const [creatingPlaybook, setCreatingPlaybook] = useState(false);
+  const [playbookName, setPlaybookName] = useState('');
+  const [playbookCategory, setPlaybookCategory] = useState('TENANCY');
+  const [mandatoryClauses, setMandatoryClauses] = useState('');
+  const [forbiddenTerms, setForbiddenTerms] = useState('');
+  const [customInstructions, setCustomInstructions] = useState('');
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch Workspace (scoped by workspaceIdParam if present)
+      let wsQuery = supabase.from('workspaces').select('*');
+      if (workspaceIdParam) {
+        wsQuery = wsQuery.eq('id', workspaceIdParam);
+      }
+      const { data: wsData } = await wsQuery.limit(1);
+
+      if (wsData && wsData.length > 0) {
+        const activeWs = wsData[0];
+        setWorkspace(activeWs);
+        setFirmName(activeWs.firm_name || '');
+        setPrimaryColor(activeWs.primary_color || '#10b981');
+        setPortalSubheading(activeWs.portal_subheading || 'Nigerian Statutory Legal Intelligence & Contract Vault');
+        setSupportEmail(activeWs.support_email || '');
+
+        // 2. Fetch Client Vaults for this Workspace
+        const { data: clientData } = await supabase
+          .from('workspace_clients')
+          .select('*, contracts(count)')
+          .eq('workspace_id', activeWs.id)
+          .order('created_at', { ascending: false });
+        setClients(clientData || []);
+
+        // 3. Fetch AI Playbooks for this Workspace
+        const { data: pbData } = await supabase
+          .from('ai_playbooks')
+          .select('*')
+          .eq('workspace_id', activeWs.id)
+          .order('created_at', { ascending: false });
+        setPlaybooks(pbData || []);
+      }
+    } catch (err: any) {
+      console.error('Error loading reseller data:', err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      try {
-        const { data: { user: authUser } } = await supabase.auth.getUser();
-        const activeUser = authUser || user;
-
-        if (!activeUser) {
-          setLoading(false);
-          return;
-        }
-
-        // Fetch user plan
-        const { data: sub } = await supabase
-          .from('subscriptions')
-          .select('plan_tier')
-          .eq('user_id', activeUser.id)
-          .eq('status', 'ACTIVE')
-          .single();
-
-        if (sub?.plan_tier) {
-          setCurrentTier(sub.plan_tier as PlanTier);
-        }
-
-        // Fetch client workspaces and white-label branding
-        const res = await fetch(`/api/reseller/clients?userId=${activeUser.id}`);
-        const data = await res.json();
-
-        if (data.workspaces) setWorkspaces(data.workspaces);
-        if (data.whiteLabel) {
-          setWhiteLabel(data.whiteLabel);
-          setFirmName(data.whiteLabel.firm_name || '');
-          setBrandColor(data.whiteLabel.brand_primary_color || '#059669');
-          setWhatsapp(data.whiteLabel.support_whatsapp || '');
-        }
-      } catch (err) {
-        console.warn('Failed to load reseller client data');
-      } finally {
-        setLoading(false);
-      }
-    }
-
     loadData();
-  }, [user]);
+  }, [workspaceIdParam, user]);
 
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientName) return;
+    if (!clientName.trim() || !workspace?.id) return;
 
-    setSavingClient(true);
+    setCreatingClient(true);
     try {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      const activeUser = authUser || user;
+      const { data, error } = await supabase
+        .from('workspace_clients')
+        .insert({
+          workspace_id: workspace.id,
+          client_name: clientName.trim(),
+          client_type: clientType,
+          contact_email: contactEmail.trim() || undefined,
+        })
+        .select()
+        .single();
 
-      const res = await fetch('/api/reseller/clients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firmUserId: activeUser?.id,
-          clientName,
-          clientEmail,
-          companyRcNumber: companyRc,
-          industry,
-        }),
-      });
-
-      const data = await res.json();
-      if (data.success && data.client) {
-        setWorkspaces([data.client, ...workspaces]);
-        setShowNewClientModal(false);
-        setClientName('');
-        setClientEmail('');
-        setCompanyRc('');
-      } else {
-        alert(data.error || 'Failed to create client workspace');
-      }
+      if (error) throw error;
+      setClients([data, ...clients]);
+      setClientName('');
+      setContactEmail('');
+      setShowClientModal(false);
+      alert(`Client Vault "${clientName}" provisioned successfully!`);
     } catch (err: any) {
-      alert('Error creating workspace: ' + err.message);
+      alert(`Failed to create client vault: ${err.message}`);
     } finally {
-      setSavingClient(false);
+      setCreatingClient(false);
     }
   };
 
-  const handleSaveWhiteLabel = async (e: React.FormEvent) => {
+  const handleSaveBranding = async () => {
+    if (!workspace?.id) return;
+    setSavingBranding(true);
+    try {
+      const { error } = await supabase
+        .from('workspaces')
+        .update({
+          firm_name: firmName,
+          primary_color: primaryColor,
+          portal_subheading: portalSubheading,
+          support_email: supportEmail,
+        })
+        .eq('id', workspace.id);
+
+      if (error) throw error;
+      alert('White-label branding settings updated successfully!');
+    } catch (err: any) {
+      alert(`Failed to save branding: ${err.message}`);
+    } finally {
+      setSavingBranding(false);
+    }
+  };
+
+  const handleCreatePlaybook = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSavingBrand(true);
+    if (!playbookName.trim() || !workspace?.id) return;
+
+    setCreatingPlaybook(true);
     try {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      const activeUser = authUser || user;
+      const mandatoryArr = mandatoryClauses
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const forbiddenArr = forbiddenTerms
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
 
-      const res = await fetch('/api/reseller/white-label', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firmUserId: activeUser?.id,
-          firmName,
-          brandPrimaryColor: brandColor,
-          supportWhatsapp: whatsapp,
-        }),
-      });
+      const { data, error } = await supabase
+        .from('ai_playbooks')
+        .insert({
+          workspace_id: workspace.id,
+          playbook_name: playbookName.trim(),
+          category: playbookCategory,
+          mandatory_clauses: mandatoryArr,
+          forbidden_terms: forbiddenArr,
+          custom_instructions: customInstructions.trim() || undefined,
+          is_active: true,
+        })
+        .select()
+        .single();
 
-      const data = await res.json();
-      if (data.success) {
-        setWhiteLabel(data.settings);
-        setShowSettingsModal(false);
-      } else {
-        alert(data.error || 'Failed to update branding settings');
-      }
+      if (error) throw error;
+      setPlaybooks([data, ...playbooks]);
+      setPlaybookName('');
+      setMandatoryClauses('');
+      setForbiddenTerms('');
+      setCustomInstructions('');
+      setShowPlaybookModal(false);
+      alert('AI Review Playbook configured and active.');
     } catch (err: any) {
-      alert('Error updating branding: ' + err.message);
+      alert(`Failed to create playbook: ${err.message}`);
     } finally {
-      setSavingBrand(false);
+      setCreatingPlaybook(false);
     }
   };
 
-  const copyPortalLink = (slug: string) => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const url = `${origin}/portal/${slug}`;
-    navigator.clipboard.writeText(url);
-    setCopiedSlug(slug);
-    setTimeout(() => setCopiedSlug(null), 2000);
+  const handleDeleteClient = async (id: string, name: string) => {
+    if (!confirm(`Delete Client Vault for "${name}"? All isolated contracts will be deleted.`)) return;
+    try {
+      const { error } = await supabase.from('workspace_clients').delete().eq('id', id);
+      if (error) throw error;
+      setClients(clients.filter((c) => c.id !== id));
+    } catch (err: any) {
+      alert(`Failed to delete client: ${err.message}`);
+    }
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-3 text-slate-400">
         <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+        <p className="text-xs">Loading Law Firm Reseller Workspace...</p>
       </div>
     );
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 text-slate-100">
-      
-      {/* Top Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-white">Law Firm Client Workspace Manager</h1>
-            <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-xs">
-              Reseller Tier
-            </Badge>
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-8 space-y-8">
+      <div className="max-w-7xl mx-auto space-y-8">
+        
+        {/* Workspace Hub Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-6">
+          <div>
+            <div className="flex items-center gap-3">
+              <span
+                className="w-4 h-4 rounded-full border border-slate-700"
+                style={{ backgroundColor: primaryColor }}
+              />
+              <h1 className="text-2xl font-bold tracking-tight text-white">
+                {workspace?.firm_name || 'Law Firm Reseller Command Center'}
+              </h1>
+              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-xs">
+                {workspace?.subdomain ? `${workspace.subdomain}.docuchain.ng` : 'Multi-Tenant Hub'}
+              </Badge>
+            </div>
+            <p className="text-slate-400 text-xs mt-1">
+              Segregated client repositories, automated AI review playbooks, and white-label statutory portal controls.
+            </p>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Create segregated client vaults, configure custom law firm branding, and issue white-labeled audit portals.
-          </p>
-        </div>
 
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            onClick={() => setShowSettingsModal(true)}
-            className="border-slate-700 bg-slate-900 text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-1.5"
-          >
-            <Settings className="w-3.5 h-3.5 text-emerald-400" /> White-Label Settings
-          </Button>
-          <Button
-            onClick={() => setShowNewClientModal(true)}
-            disabled={!permissions.hasClientVaultManager}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-950"
-          >
-            <Plus className="w-4 h-4" /> Add Client Workspace
-          </Button>
-        </div>
-      </div>
-
-      {/* Gating Check using TierFeatureLock */}
-      <TierFeatureLock
-        featureName="Law Firm Reseller Client Manager"
-        requiredTier="LAW_FIRM_RESELLER"
-        description="Segregate multiple client vaults under your law firm practice, brand counterparty portals, and provide certified statutory reports."
-        isUnlocked={permissions.hasClientVaultManager}
-      >
-        {/* Active Firm Identity Widget */}
-        <div className="bg-gradient-to-r from-emerald-950/30 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex items-center gap-4">
-            <div 
-              className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-white shadow-lg text-lg"
-              style={{ backgroundColor: whiteLabel?.brand_primary_color || '#059669' }}
+          <div className="flex items-center gap-3">
+            <Link href="/reseller/team">
+              <Button variant="outline" size="sm" className="border-slate-700 bg-slate-900 text-xs text-slate-300 hover:text-white flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-emerald-400" /> Firm Team &amp; RBAC
+              </Button>
+            </Link>
+            <Button
+              onClick={() => setShowClientModal(true)}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-2"
             >
-              <Building2 className="w-6 h-6" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-white">{whiteLabel?.firm_name || 'Your Law Practice (Default)'}</h2>
-              <p className="text-xs text-slate-400">
-                White-label theme: <span className="font-mono text-emerald-400">{whiteLabel?.brand_primary_color || '#059669'}</span> • WhatsApp Line: {whiteLabel?.support_whatsapp || 'Not Configured'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-6 border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-6">
-            <div>
-              <span className="text-[11px] text-slate-500">Active Workspaces</span>
-              <div className="text-xl font-bold text-white">{workspaces.length}</div>
-            </div>
-            <div>
-              <span className="text-[11px] text-slate-500">Managed Contracts</span>
-              <div className="text-xl font-bold text-emerald-400">
-                {workspaces.reduce((acc, ws) => acc + (ws.contracts?.length || 0), 0)}
-              </div>
-            </div>
+              <Plus className="w-4 h-4" /> Provision Client Vault
+            </Button>
           </div>
         </div>
 
-        {/* Client Workspaces List */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <Users className="w-4 h-4 text-emerald-400" /> Managed Client Accounts
-          </h3>
-
-          {workspaces.length === 0 ? (
-            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-12 text-center space-y-3">
-              <FolderLock className="w-10 h-10 text-slate-600 mx-auto" />
-              <div className="space-y-1">
-                <h4 className="text-sm font-semibold text-white">No Client Workspaces Added Yet</h4>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Add your corporate clients, property developers, or startup accounts to maintain isolated contract vaults.
-                </p>
-              </div>
-              <Button 
-                onClick={() => setShowNewClientModal(true)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1" /> Create First Client Workspace
-              </Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {workspaces.map((client) => {
-                const contractCount = client.contracts?.length || 0;
-                return (
-                  <Card key={client.id} className="bg-slate-900 border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between">
-                    <CardHeader className="p-5 pb-3">
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-1">
-                          <CardTitle className="text-sm font-bold text-white truncate max-w-[200px]">
-                            {client.client_name}
-                          </CardTitle>
-                          <p className="text-[11px] text-slate-400">{client.industry}</p>
-                        </div>
-                        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
-                          {client.status}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-
-                    <CardContent className="p-5 pt-0 space-y-4">
-                      <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1 text-xs">
-                        <div className="flex items-center justify-between text-slate-400">
-                          <span>RC Number:</span>
-                          <span className="font-mono text-slate-200">{client.company_rc_number || 'N/A'}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-slate-400">
-                          <span>Vault Contracts:</span>
-                          <span className="font-semibold text-emerald-400">{contractCount} docs</span>
-                        </div>
-                        <div className="flex items-center justify-between text-slate-400">
-                          <span>Client Email:</span>
-                          <span className="text-slate-200 truncate max-w-[140px]">{client.client_email || 'None'}</span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 pt-1">
-                        <Button
-                          variant="outline"
-                          onClick={() => copyPortalLink(client.portal_access_slug)}
-                          className="w-full border-slate-800 bg-slate-950 hover:bg-slate-800 text-xs text-slate-300 flex items-center justify-center gap-1.5 h-8"
-                        >
-                          {copiedSlug === client.portal_access_slug ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied Portal Link
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5 text-slate-400" /> Copy Client Access Portal
-                            </>
-                          )}
-                        </Button>
-                        <Link href={`/vault?client=${client.id}`} className="block">
-                          <Button className="w-full bg-emerald-600/20 border border-emerald-500/30 hover:bg-emerald-600/30 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1.5 h-8">
-                            <FolderLock className="w-3.5 h-3.5" /> Open Client Vault
-                          </Button>
-                        </Link>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+        {/* Tab Navigation */}
+        <div className="flex gap-2 border-b border-slate-800 pb-3">
+          <Button
+            size="sm"
+            variant={activeTab === 'clients' ? 'default' : 'ghost'}
+            onClick={() => setActiveTab('clients')}
+            className={`text-xs ${activeTab === 'clients' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+          >
+            <FolderLock className="w-3.5 h-3.5 mr-1.5" /> Segregated Client Vaults ({clients.length})
+          </Button>
+          <Button
+            size="sm"
+            variant={activeTab === 'playbooks' ? 'default' : 'ghost'}
+            onClick={() => setActiveTab('playbooks')}
+            className={`text-xs ${activeTab === 'playbooks' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+          >
+            <Scale className="w-3.5 h-3.5 mr-1.5" /> AI Review Playbooks ({playbooks.length})
+          </Button>
+          <Button
+            size="sm"
+            variant={activeTab === 'branding' ? 'default' : 'ghost'}
+            onClick={() => setActiveTab('branding')}
+            className={`text-xs ${activeTab === 'branding' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+          >
+            <Palette className="w-3.5 h-3.5 mr-1.5" /> White-Label Branding
+          </Button>
         </div>
-      </TierFeatureLock>
 
-      {/* Modal 1: Create New Client Workspace */}
-      {showNewClientModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-emerald-400" /> New Client Workspace
-              </h3>
-              <button onClick={() => setShowNewClientModal(false)} className="text-slate-400 hover:text-white text-xs">✕</button>
+        {/* TAB 1: CLIENT VAULTS DIRECTORY */}
+        {activeTab === 'clients' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {clients.map((c) => (
+                <Card key={c.id} className="bg-slate-900/80 border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between">
+                  <CardHeader className="p-5 pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center justify-between">
+                      <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">
+                        {c.client_type || 'CORPORATE'}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteClient(c.id, c.client_name)}
+                        className="h-6 w-6 p-0 text-slate-500 hover:text-rose-400"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                    <CardTitle className="text-base font-bold text-white mt-2 truncate">
+                      {c.client_name}
+                    </CardTitle>
+                    <p className="text-xs text-slate-400 truncate">{c.contact_email || 'No contact email'}</p>
+                  </CardHeader>
+                  <CardContent className="p-5 space-y-4">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span>Stored Agreements:</span>
+                      <span className="font-semibold text-slate-200">
+                        {c.contracts?.[0]?.count || 0} contracts
+                      </span>
+                    </div>
+
+                    <Link href={`/vault?clientId=${c.id}`} className="block">
+                      <Button
+                        size="sm"
+                        className="w-full bg-slate-950 hover:bg-slate-800 border border-slate-700 text-emerald-400 text-xs flex items-center justify-center gap-1.5"
+                      >
+                        <FolderLock className="w-3.5 h-3.5" /> Open Isolated Vault
+                      </Button>
+                    </Link>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
+          </div>
+        )}
 
-            <form onSubmit={handleCreateClient} className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="text-slate-300 font-medium">Client / Company Name *</label>
-                <Input
-                  required
-                  placeholder="e.g. Landmark Properties Nigeria Ltd"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  className="bg-slate-950 border-slate-800 text-white"
-                />
+        {/* TAB 2: AI REVIEW PLAYBOOKS */}
+        {activeTab === 'playbooks' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">Statutory Playbook Rules</h2>
+                <p className="text-xs text-slate-400">Rules injected dynamically into AI review prompts during contract ingestion.</p>
               </div>
-
-              <div className="space-y-1.5">
-                <label className="text-slate-300 font-medium">Primary Contact Email</label>
-                <Input
-                  type="email"
-                  placeholder="legal@landmark.ng"
-                  value={clientEmail}
-                  onChange={(e) => setClientEmail(e.target.value)}
-                  className="bg-slate-950 border-slate-800 text-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">CAMA RC Number</label>
-                  <Input
-                    placeholder="RC-1294829"
-                    value={companyRc}
-                    onChange={(e) => setCompanyRc(e.target.value)}
-                    className="bg-slate-950 border-slate-800 text-white font-mono text-[11px]"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Sector / Industry</label>
-                  <Input
-                    placeholder="Real Estate / Fintech"
-                    value={industry}
-                    onChange={(e) => setIndustry(e.target.value)}
-                    className="bg-slate-950 border-slate-800 text-white text-[11px]"
-                  />
-                </div>
-              </div>
-
               <Button
-                type="submit"
-                disabled={savingClient}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 mt-2 shadow-lg shadow-emerald-950 flex items-center justify-center gap-2"
+                onClick={() => setShowPlaybookModal(true)}
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1.5"
               >
-                {savingClient ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Isolated Client Workspace'}
+                <Plus className="w-4 h-4" /> Create Review Playbook
               </Button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal 2: White Label Settings */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Settings className="w-4 h-4 text-emerald-400" /> White-Label Portal Customization
-              </h3>
-              <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-white text-xs">✕</button>
             </div>
 
-            <form onSubmit={handleSaveWhiteLabel} className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="text-slate-300 font-medium">Law Firm Display Name</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {playbooks.map((pb) => (
+                <Card key={pb.id} className="bg-slate-900/80 border-slate-800 space-y-3 p-5">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="text-sm font-bold text-white">{pb.playbook_name}</h3>
+                      <Badge className="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] mt-1">
+                        Category: {pb.category}
+                      </Badge>
+                    </div>
+                    <Badge className="bg-emerald-500/20 text-emerald-400 text-[10px]">ACTIVE</Badge>
+                  </div>
+
+                  {pb.mandatory_clauses && pb.mandatory_clauses.length > 0 && (
+                    <div className="text-xs space-y-1">
+                      <span className="text-[10px] font-semibold text-emerald-400 uppercase">Mandatory Terms:</span>
+                      <ul className="list-disc list-inside text-slate-300 space-y-0.5">
+                        {pb.mandatory_clauses.map((c: string, i: number) => (
+                          <li key={i} className="truncate">{c}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {pb.forbidden_terms && pb.forbidden_terms.length > 0 && (
+                    <div className="text-xs space-y-1">
+                      <span className="text-[10px] font-semibold text-rose-400 uppercase">Forbidden / High-Risk Phrases:</span>
+                      <ul className="list-disc list-inside text-slate-300 space-y-0.5">
+                        {pb.forbidden_terms.map((t: string, i: number) => (
+                          <li key={i} className="truncate">{t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: WHITE-LABEL BRANDING */}
+        {activeTab === 'branding' && (
+          <Card className="bg-slate-900/80 border-slate-800 max-w-2xl">
+            <CardHeader className="p-5 border-b border-slate-800">
+              <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
+                <Palette className="w-4 h-4 text-emerald-400" /> White-Label Brand Customization
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Law Firm / Brand Name</label>
                 <Input
-                  required
-                  placeholder="e.g. Aluko & Oyebode Legal Partners"
                   value={firmName}
                   onChange={(e) => setFirmName(e.target.value)}
-                  className="bg-slate-950 border-slate-800 text-white"
+                  className="bg-slate-950 border-slate-700 text-xs text-slate-100"
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-slate-300 font-medium">Primary Brand Color</label>
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Portal Primary Accent Color</label>
                 <div className="flex items-center gap-3">
-                  <input
-                    type="color"
-                    value={brandColor}
-                    onChange={(e) => setBrandColor(e.target.value)}
-                    className="w-9 h-9 rounded-lg bg-transparent border border-slate-800 cursor-pointer"
-                  />
                   <Input
-                    value={brandColor}
-                    onChange={(e) => setBrandColor(e.target.value)}
-                    className="bg-slate-950 border-slate-800 text-white font-mono text-xs"
+                    type="color"
+                    value={primaryColor}
+                    onChange={(e) => setPrimaryColor(e.target.value)}
+                    className="h-9 w-16 bg-slate-950 border-slate-700 p-1 cursor-pointer"
                   />
+                  <span className="font-mono text-xs text-slate-400">{primaryColor}</span>
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-slate-300 font-medium">Priority WhatsApp Helpline</label>
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Custom Portal Subheading</label>
                 <Input
-                  placeholder="+234 803 000 0000"
-                  value={whatsapp}
-                  onChange={(e) => setWhatsapp(e.target.value)}
-                  className="bg-slate-950 border-slate-800 text-white"
+                  value={portalSubheading}
+                  onChange={(e) => setPortalSubheading(e.target.value)}
+                  className="bg-slate-950 border-slate-700 text-xs text-slate-100"
                 />
               </div>
 
-              <Button
-                type="submit"
-                disabled={savingBrand}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 mt-2 shadow-lg shadow-emerald-950 flex items-center justify-center gap-2"
-              >
-                {savingBrand ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Firm Branding'}
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Support Email</label>
+                <Input
+                  type="email"
+                  value={supportEmail}
+                  onChange={(e) => setSupportEmail(e.target.value)}
+                  placeholder="legal@adelowolaw.ng"
+                  className="bg-slate-950 border-slate-700 text-xs text-slate-100"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <Button
+                  onClick={handleSaveBranding}
+                  disabled={savingBranding}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1.5"
+                >
+                  {savingBranding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Save Branding Settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+      </div>
+
+      {/* Provision Client Vault Modal */}
+      {showClientModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <Card className="bg-slate-900 border-slate-800 w-full max-w-md shadow-2xl">
+            <CardHeader className="p-5 border-b border-slate-800 flex flex-row items-center justify-between">
+              <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
+                <FolderLock className="w-4 h-4 text-emerald-400" /> Provision Segregated Client Vault
+              </CardTitle>
+              <Button variant="ghost" size="sm" onClick={() => setShowClientModal(false)} className="h-6 w-6 p-0 text-slate-400">
+                <X className="w-4 h-4" />
               </Button>
-            </form>
-          </div>
+            </CardHeader>
+            <CardContent className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Client Entity Name</label>
+                <Input
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  placeholder="e.g. First Bank Commercial Ltd"
+                  className="bg-slate-950 border-slate-700 text-xs text-slate-100"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Client Category</label>
+                <select
+                  value={clientType}
+                  onChange={(e) => setClientType(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-xs text-slate-200"
+                >
+                  <option value="CORPORATE">Corporate Enterprise</option>
+                  <option value="REAL_ESTATE">Real Estate &amp; Property</option>
+                  <option value="FINTECH">Fintech / Financial Services</option>
+                  <option value="SME">SME / Commercial Client</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Primary Contact Email</label>
+                <Input
+                  type="email"
+                  value={contactEmail}
+                  onChange={(e) => setContactEmail(e.target.value)}
+                  placeholder="legal.counsel@firstbank.ng"
+                  className="bg-slate-950 border-slate-700 text-xs text-slate-100"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <Button variant="ghost" size="sm" onClick={() => setShowClientModal(false)} className="text-xs text-slate-400">
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleCreateClient}
+                  disabled={creatingClient || !clientName.trim()}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1.5"
+                >
+                  {creatingClient ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Provision Vault
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
+      {/* Provision AI Playbook Modal */}
+      {showPlaybookModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <Card className="bg-slate-900 border-slate-800 w-full max-w-lg shadow-2xl">
+            <CardHeader className="p-5 border-b border-slate-800 flex flex-row items-center justify-between">
+              <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
+                <Scale className="w-4 h-4 text-emerald-400" /> Create Review Playbook
+              </CardTitle>
+              <Button variant="ghost" size="sm" onClick={() => setShowPlaybookModal(false)} className="h-6 w-6 p-0 text-slate-400">
+                <X className="w-4 h-4" />
+              </Button>
+            </CardHeader>
+            <CardContent className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Playbook Name</label>
+                <Input
+                  value={playbookName}
+                  onChange={(e) => setPlaybookName(e.target.value)}
+                  placeholder="e.g. Lagos Commercial Lease Policy"
+                  className="bg-slate-950 border-slate-700 text-xs text-slate-100"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Category Scope</label>
+                <select
+                  value={playbookCategory}
+                  onChange={(e) => setPlaybookCategory(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-xs text-slate-200"
+                >
+                  <option value="TENANCY">Tenancy &amp; Lease</option>
+                  <option value="COMMERCIAL">Commercial SLAs &amp; Vendors</option>
+                  <option value="EMPLOYMENT">Employment &amp; Labour</option>
+                  <option value="NDA">Non-Disclosure (NDA)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Mandatory Clauses (One per line)</label>
+                <textarea
+                  rows={3}
+                  value={mandatoryClauses}
+                  onChange={(e) => setMandatoryClauses(e.target.value)}
+                  placeholder="Section 13 Lagos Tenancy 6-Month Notice&#10;Arbitration and Mediation Act 2023 Venue"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-md p-2 text-xs font-mono text-slate-200"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1">Forbidden / Prohibited Terms (One per line)</label>
+                <textarea
+                  rows={3}
+                  value={forbiddenTerms}
+                  onChange={(e) => setForbiddenTerms(e.target.value)}
+                  placeholder="Demand for 2-year advance rent&#10;Arbitration and Conciliation Act 1988"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-md p-2 text-xs font-mono text-slate-200"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <Button variant="ghost" size="sm" onClick={() => setShowPlaybookModal(false)} className="text-xs text-slate-400">
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleCreatePlaybook}
+                  disabled={creatingPlaybook || !playbookName.trim()}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1.5"
+                >
+                  {creatingPlaybook ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Save Playbook
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function ResellerClientsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">
+          <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+        </div>
+      }
+    >
+      <ResellerClientsContent />
+    </Suspense>
   );
 }

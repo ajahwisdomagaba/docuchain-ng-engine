@@ -8,7 +8,7 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-export function extractValidJson(raw: string): any {
+ function extractValidJson(raw: string): any {
   if (!raw || typeof raw !== 'string') return null;
 
   // Strip Markdown code blocks if present

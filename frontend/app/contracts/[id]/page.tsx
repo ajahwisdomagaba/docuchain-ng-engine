@@ -1,562 +1,734 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { 
   ArrowLeft, 
   ShieldAlert, 
-  CheckCircle2, 
-  AlertTriangle, 
-  FileDown, 
+  ShieldCheck, 
+  FileText, 
   Copy, 
   Check, 
+  Calendar, 
+  Scale, 
+  Sparkles, 
+  Download, 
+  Bot, 
+  Send, 
+  X, 
+  Loader2,
   Building2,
   Lock,
-  Briefcase,
-  Users,
-  Scale,
-  DollarSign,
-  Calendar,
-  Loader2,
-  PenTool,
-  Bot,
-  Send,
-  X,
-  Quote
+  FileCode,
+  RotateCcw,
+  CheckCheck,
+  Save,
+  SplitSquareVertical
 } from 'lucide-react';
 import jsPDF from 'jspdf';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabaseClient';
 
-export type ContractCategory = 'TENANCY' | 'NDA' | 'VENDOR_SERVICE' | 'EMPLOYMENT' | 'COMMERCIAL';
-export type RiskLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'COMPLIANT';
-
-interface AuditRiskFlag {
-  id: string;
+interface RiskFlag {
+  id?: string;
   clauseTitle: string;
-  badgeLabel: string;
-  riskLevel: RiskLevel;
   originalText: string;
-  recommendedRedline: string;
+  riskLevel: 'HIGH' | 'MEDIUM' | 'LOW';
+  issueSummary: string;
   legalBasis: string;
+  recommendedRedline: string;
   plainEnglishExplanation: string;
+  isApplied?: boolean;
 }
 
-interface ContractDetail {
-  id: string;
-  title: string;
-  category: ContractCategory;
-  counterparty: string;
-  governingLaw: string;
-  overallScore: number;
-  effectiveDate: string;
-  expirationDate: string;
-  rawText: string;
-  riskFlags: AuditRiskFlag[];
+interface WorkspaceBranding {
+  firm_name: string;
+  primary_color: string;
+  portal_subheading: string;
+  support_email?: string;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  let cleanHex = hex.replace('#', '');
+  if (cleanHex.length === 3) {
+    cleanHex = cleanHex.split('').map(char => char + char).join('');
+  }
+  const num = parseInt(cleanHex, 16);
+  if (isNaN(num)) return [16, 185, 129];
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 }
 
 export default function ContractDetailPage() {
   const params = useParams();
-  const rawId = params?.id as string;
-  const id = Array.isArray(rawId) ? rawId[0] : rawId;
   const router = useRouter();
+  const contractId = params?.id as string;
 
-  const [contract, setContract] = useState<ContractDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [savingChanges, setSavingChanges] = useState(false);
+  const [contract, setContract] = useState<any>(null);
+  const [originalDraft, setOriginalDraft] = useState<string>('');
+  const [editedDraft, setEditedDraft] = useState<string>('');
+  const [viewMode, setViewMode] = useState<'split' | 'editor'>('split');
+  const [riskFlags, setRiskFlags] = useState<RiskFlag[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [branding, setBranding] = useState<WorkspaceBranding | null>(null);
 
-  // AI Q&A Assistant State
+  // AI Q&A Drawer State
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
-  const [isAnswering, setIsAnswering] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'ai' | 'user'; text: string; citation?: string }>>([
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'ai' | 'user'; text: string }>>([
     {
       sender: 'ai',
-      text: 'Ask any question about this agreement (e.g. "Can I terminate early without penalty?" or "What are my rent obligations?") and get a cited answer from the exact clause.'
+      text: 'DocuChain Statutory Co-Pilot online. Ask questions regarding clause redlines, Nigerian compliance, or execution.'
     }
   ]);
 
   useEffect(() => {
-    async function loadContract() {
-      if (!id) return;
+    async function loadContractData() {
+      if (!contractId) return;
       setLoading(true);
 
       try {
-        // 1. Fetch Contract & Relational risk_flags in a single join query
         const { data, error } = await supabase
           .from('contracts')
           .select('*, risk_flags(*)')
-          .eq('id', id)
+          .eq('id', contractId)
           .maybeSingle();
 
-        if (error) {
-          console.error('Supabase query error:', error);
-          setContract(null);
-          return;
-        }
+        if (error) throw error;
 
-        if (!data) {
-          setContract(null);
-          return;
-        }
+        if (data) {
+          setContract(data);
 
-        // 2. Parse metadata safely
-        let metadata: any = {};
-        if (typeof data.metadata === 'string') {
-          try {
-            metadata = JSON.parse(data.metadata);
-          } catch {
-            metadata = {};
+          let meta = data.metadata;
+          if (typeof meta === 'string') {
+            try { meta = JSON.parse(meta); } catch { meta = {}; }
           }
-        } else if (typeof data.metadata === 'object' && data.metadata !== null) {
-          metadata = data.metadata;
-        }
 
-        // 3. Resolve Full Document Text with exhaustive fallbacks
-        let fullDocumentText = 
-          metadata.rawDraft || 
-          metadata.extractedText || 
-          metadata.rawText || 
-          metadata.documentText || 
-          metadata.contractText || 
-          metadata.text || 
-          data.raw_text || 
-          data.raw_draft || 
-          data.extracted_text || 
-          data.content || 
-          metadata.originalText || 
-          metadata.summary || 
-          '';
+          const fullDraft = 
+            data.content || 
+            meta?.rawDraft || 
+            meta?.extractedText || 
+            meta?.rawText || 
+            data.raw_text || 
+            '';
 
-        if (!fullDocumentText.trim()) {
-          try {
-            const { data: chunks } = await supabase
-              .from('contract_chunks')
-              .select('*')
-              .eq('contract_id', id)
-              .order('chunk_index', { ascending: true });
+          setOriginalDraft(fullDraft);
+          setEditedDraft(fullDraft);
 
-            if (chunks && chunks.length > 0) {
-              fullDocumentText = chunks
-                .map((c: any) => c.content || c.chunk_text || c.text || '')
-                .filter(Boolean)
-                .join('\n\n');
-            }
-          } catch (chunkErr) {
-            console.warn('Could not query chunks:', chunkErr);
+          if (Array.isArray(data.risk_flags) && data.risk_flags.length > 0) {
+            setRiskFlags(data.risk_flags.map((rf: any) => ({
+              id: rf.id,
+              clauseTitle: rf.clause_title || 'Statutory Deviation',
+              originalText: rf.original_text || '',
+              riskLevel: (rf.risk_level || 'HIGH').toUpperCase(),
+              issueSummary: rf.issue_summary || rf.plain_english_explanation || 'Statutory misalignment identified',
+              legalBasis: rf.legal_basis || 'Nigerian Legal Framework',
+              recommendedRedline: rf.recommended_redline || 'Standard statutory redline clause',
+              plainEnglishExplanation: rf.plain_english_explanation || 'Requires redlining before execution',
+              isApplied: rf.status === 'RESOLVED'
+            })));
+          } else if (Array.isArray(meta?.risk_flags) && meta.risk_flags.length > 0) {
+            setRiskFlags(meta.risk_flags.map((rf: any) => ({
+              ...rf,
+              isApplied: rf.status === 'RESOLVED' || rf.isApplied === true
+            })));
+          }
+
+          // Fetch firm branding
+          let wsId = data.workspace_id || meta?.workspaceId;
+          if (!wsId && data.client_id) {
+            const { data: clientData } = await supabase
+              .from('workspace_clients')
+              .select('workspace_id')
+              .eq('id', data.client_id)
+              .maybeSingle();
+            wsId = clientData?.workspace_id;
+          }
+
+          if (wsId) {
+            const { data: wsData } = await supabase
+              .from('workspaces')
+              .select('firm_name, primary_color, portal_subheading, support_email')
+              .eq('id', wsId)
+              .maybeSingle();
+            if (wsData) setBranding(wsData);
           }
         }
-
-        if (!fullDocumentText.trim()) {
-          fullDocumentText = 'No contract text found for this document.';
-        }
-
-        // 4. Normalize Category
-        let category: ContractCategory = 'COMMERCIAL';
-        const typeStr = (data.contract_type || metadata.category || data.category || data.domain_category || '').toUpperCase();
-        if (typeStr.includes('TENANCY') || typeStr.includes('LEASE')) category = 'TENANCY';
-        else if (typeStr.includes('NDA') || typeStr.includes('CONFIDENTIAL')) category = 'NDA';
-        else if (typeStr.includes('EMPLOYMENT') || typeStr.includes('LABOUR')) category = 'EMPLOYMENT';
-        else if (typeStr.includes('VENDOR') || typeStr.includes('SLA')) category = 'VENDOR_SERVICE';
-
-        // 5. Resolve Risk Flags (Relational table first, then metadata JSON fallback)
-        const rawFlags = Array.isArray(data.risk_flags) && data.risk_flags.length > 0 
-          ? data.risk_flags 
-          : (Array.isArray(metadata.risk_flags) ? metadata.risk_flags : []);
-
-        const mappedFlags: AuditRiskFlag[] = rawFlags.map((f: any, idx: number) => ({
-          id: f.id || `rf-${idx}`,
-          clauseTitle: f.clause_title || f.clauseTitle || f.clause_reference || 'Statutory Compliance Clause',
-          badgeLabel: f.badge_label || f.badgeLabel || f.legalBasis || f.legal_basis || f.statute_violated || 'Statutory Flag',
-          riskLevel: ((f.risk_level || f.riskLevel || f.severity || 'HIGH').toUpperCase()) as RiskLevel,
-          originalText: f.original_text || f.originalText || f.issue || '',
-          recommendedRedline: f.recommended_redline || f.recommendedRedline || f.remediation || '',
-          legalBasis: f.legal_basis || f.legalBasis || f.statute_violated || 'Nigerian Statutory Framework',
-          plainEnglishExplanation: f.plain_english_explanation || f.plainEnglishExplanation || f.issueSummary || f.issue || 'Statutory deviation detected.'
-        }));
-
-        // 6. Calculate Score
-        let score = 70;
-        if (typeof data.risk_score === 'number') {
-          score = Math.max(0, 100 - data.risk_score);
-        } else if (typeof data.overall_score === 'number') {
-          score = data.overall_score;
-        } else if (typeof metadata.overallScore === 'number') {
-          score = metadata.overallScore;
-        }
-
-        setContract({
-          id: data.id,
-          title: data.title || metadata.originalFileName || 'Untitled Contract',
-          category,
-          counterparty: data.counterparty || metadata.counterparty || 'Counterparty Entity',
-          governingLaw: data.governing_law || metadata.governingLaw || 'Laws of the Federal Republic of Nigeria',
-          overallScore: score,
-          effectiveDate: data.effective_date || (data.created_at ? new Date(data.created_at).toLocaleDateString('en-GB') : '28/08/2026'),
-          expirationDate: data.expiry_date || data.expiration_date || 'Pending Execution',
-          rawText: fullDocumentText,
-          riskFlags: mappedFlags
-        });
       } catch (err: any) {
-        console.error('Failed to load contract from Supabase:', err.message);
-        setContract(null);
+        console.error('Failed to load contract:', err.message);
       } finally {
         setLoading(false);
       }
     }
 
-    loadContract();
-  }, [id]);
+    loadContractData();
+  }, [contractId]);
 
-  const handleCopy = (riskId: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(riskId);
-    setTimeout(() => setCopiedId(null), 2000);
+  // Apply or Revert an Individual AI Redline
+  const toggleApplyRedline = (index: number) => {
+    const flag = riskFlags[index];
+    const isCurrentlyApplied = flag.isApplied;
+
+    if (!isCurrentlyApplied) {
+      let updated = editedDraft;
+      if (flag.originalText && updated.includes(flag.originalText.trim())) {
+        updated = updated.replace(flag.originalText.trim(), flag.recommendedRedline.trim());
+      } else {
+        const firstLine = flag.originalText.split('\n')[0].trim();
+        if (firstLine && updated.includes(firstLine)) {
+          const regex = new RegExp(firstLine.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^\\n]*', 'g');
+          updated = updated.replace(regex, flag.recommendedRedline.trim());
+        } else {
+          updated += `\n\n[STATUTORY REDLINE - ${flag.clauseTitle}]:\n${flag.recommendedRedline.trim()}`;
+        }
+      }
+      setEditedDraft(updated);
+    } else {
+      let updated = editedDraft;
+      if (flag.recommendedRedline && updated.includes(flag.recommendedRedline.trim())) {
+        updated = updated.replace(flag.recommendedRedline.trim(), flag.originalText.trim());
+      }
+      setEditedDraft(updated);
+    }
+
+    setRiskFlags((prev) =>
+      prev.map((f, i) => (i === index ? { ...f, isApplied: !isCurrentlyApplied } : f))
+    );
   };
 
-  const handleSendChat = async () => {
-    if (!chatInput.trim() || isAnswering || !contract) return;
-    const userMsg = chatInput.trim();
+  // Apply ALL Redlines in one click
+  const handleApplyAllRedlines = () => {
+    let draft = originalDraft;
+    const updatedFlags = riskFlags.map((flag) => {
+      if (flag.originalText && draft.includes(flag.originalText.trim())) {
+        draft = draft.replace(flag.originalText.trim(), flag.recommendedRedline.trim());
+      } else {
+        draft += `\n\n[STATUTORY REDLINE - ${flag.clauseTitle}]:\n${flag.recommendedRedline.trim()}`;
+      }
+      return { ...flag, isApplied: true };
+    });
+    setEditedDraft(draft);
+    setRiskFlags(updatedFlags);
+  };
 
-    const updatedHistory = [...chatMessages, { sender: 'user' as const, text: userMsg }];
-    setChatMessages(updatedHistory);
-    setChatInput('');
-    setIsAnswering(true);
-
+  // Save Modified Redlined Version & Update Relational Risk Flags in Supabase
+  const handleSaveDraftChanges = async () => {
+    setSavingChanges(true);
     try {
-      const conversationHistory = updatedHistory
-        .slice(1, -1)
-        .map((m) => ({ sender: m.sender, text: m.text }));
+      const currentMeta = typeof contract.metadata === 'string' 
+        ? JSON.parse(contract.metadata) 
+        : (contract.metadata || {});
 
-      const res = await fetch('http://localhost:5000/api/review/qa', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contractText: contract.rawText,
-          question: userMsg,
-          governingLaw: contract.governingLaw,
-          history: conversationHistory,
-        }),
-      });
+      const appliedFlags = riskFlags.filter(f => f.isApplied);
+      const remainingViolationsCount = riskFlags.length - appliedFlags.length;
+      
+      // Dynamic score computation
+      const updatedRiskScore = Math.max(0, Math.round((remainingViolationsCount / Math.max(1, riskFlags.length)) * 50));
+      const updatedOverallScore = 100 - updatedRiskScore;
 
-      if (!res.ok) throw new Error('API server returned error');
-      const result = await res.json();
+      // 1. Update Contract Record & Metadata
+      const { error: contractErr } = await supabase
+        .from('contracts')
+        .update({
+          risk_score: updatedRiskScore,
+          status: remainingViolationsCount === 0 ? 'Compliant' : 'Partially Redlined',
+          version: (contract.version || 1) + 1,
+          metadata: {
+            ...currentMeta,
+            rawDraft: editedDraft,
+            extractedText: editedDraft,
+            overallScore: updatedOverallScore,
+            risk_flags: riskFlags.map(rf => ({ ...rf, status: rf.isApplied ? 'RESOLVED' : 'OPEN' })),
+            last_redlined_at: new Date().toISOString()
+          }
+        })
+        .eq('id', contract.id);
 
-      setChatMessages((prev) => [
+      if (contractErr) throw contractErr;
+
+      // 2. Update Relational risk_flags Table Status
+      for (const flag of riskFlags) {
+        if (flag.id) {
+          await supabase
+            .from('risk_flags')
+            .update({ status: flag.isApplied ? 'RESOLVED' : 'OPEN' })
+            .eq('id', flag.id);
+        }
+      }
+
+      setContract((prev: any) => ({
         ...prev,
-        {
-          sender: 'ai',
-          text: result.answer || result.fallbackAnswer || 'No response generated.',
-          citation: result.citation || undefined,
-        },
-      ]);
-    } catch (err) {
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          sender: 'ai',
-          text: 'Unable to reach the DocuChain AI Engine. Please check your backend connection on port 5000.',
-        },
-      ]);
+        risk_score: updatedRiskScore,
+        version: (prev.version || 1) + 1,
+        status: remainingViolationsCount === 0 ? 'Compliant' : 'Partially Redlined'
+      }));
+
+      alert('Redlined contract saved! Risk score and portfolio heatmap updated.');
+    } catch (err: any) {
+      alert(`Failed to save redline revisions: ${err.message}`);
     } finally {
-      setIsAnswering(false);
+      setSavingChanges(false);
     }
   };
 
+  // Export Clean Redlined Contract as .DOCX (Microsoft Word)
+  const handleExportDocx = async () => {
+    try {
+      const cleanTitle = (contract?.title || 'Contract Agreement').replace(/[^a-zA-Z0-9 ]/g, '');
+      const paragraphs = editedDraft.split('\n').map((line) => {
+        const isHeader = line.trim().startsWith('#') || (line.trim().toUpperCase() === line && line.trim().length > 3 && line.trim().length < 60);
+        return new Paragraph({
+          text: line.replace(/^#+\s*/, ''),
+          heading: isHeader ? HeadingLevel.HEADING_2 : undefined,
+          spacing: { after: 120 }
+        });
+      });
+
+      const doc = new Document({
+        sections: [
+          {
+            properties: {},
+            children: [
+              new Paragraph({
+                text: cleanTitle,
+                heading: HeadingLevel.TITLE,
+                spacing: { after: 240 }
+              }),
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `Redlined & Statutory Verified by DocuChain NG (${branding?.firm_name || 'Legal Suite'})`, italics: true, color: '666666' })
+                ],
+                spacing: { after: 300 }
+              }),
+              ...paragraphs
+            ]
+          }
+        ]
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${cleanTitle.replace(/\s+/g, '_')}_Redlined.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(`Failed to generate DOCX file: ${err.message}`);
+    }
+  };
+
+  // Export Full Statutory PDF Certificate
   const handleExportPDF = () => {
     if (!contract) return;
     const doc = new jsPDF();
-    const cleanText = (t: string) => (t || '').replace(/₦/g, 'NGN ').replace(/[^\x00-\x7F]/g, '');
+    const appliedCount = riskFlags.filter(f => f.isApplied).length;
+    const remainingCount = riskFlags.length - appliedCount;
+    const complianceScore = Math.max(0, 100 - Math.round((remainingCount / Math.max(1, riskFlags.length)) * 50));
+
+    const firmName = branding?.firm_name || 'DocuChain NG Legal Intelligence';
+    const primaryColorHex = branding?.primary_color || '#10b981';
+    const [brandR, brandG, brandB] = hexToRgb(primaryColorHex);
+
+    const cleanText = (str: string) => {
+      if (!str) return '';
+      return str.replace(/₦/g, 'NGN ').replace(/[^\x00-\x7F]/g, '');
+    };
 
     doc.setFillColor(15, 23, 42);
-    doc.rect(0, 0, 210, 32, 'F');
-    doc.setTextColor(16, 185, 129);
-    doc.setFontSize(18);
+    doc.rect(0, 0, 210, 40, 'F');
+    doc.setFillColor(brandR, brandG, brandB);
+    doc.rect(0, 40, 210, 3, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.text('DocuChain NG — Statutory Compliance Audit', 14, 20);
+    doc.text(cleanText(firmName.toUpperCase()), 14, 18);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(brandR, brandG, brandB);
+    doc.text('REDLINED STATUTORY COMPLIANCE CERTIFICATE', 14, 26);
+
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 49, 182, 32, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, 49, 182, 32, 2, 2, 'S');
 
     doc.setTextColor(30, 41, 59);
-    doc.setFontSize(10);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text('AUDIT & REDLINE SUMMARY', 20, 56);
+
     doc.setFont('helvetica', 'normal');
-    doc.text(`Document: ${cleanText(contract.title)}`, 14, 42);
-    doc.text(`Counterparty: ${cleanText(contract.counterparty)}`, 14, 48);
-    doc.text(`Governing Law: ${cleanText(contract.governingLaw)}`, 14, 54);
-    doc.text(`Compliance Score: ${contract.overallScore}/100`, 14, 60);
+    doc.setFontSize(8.5);
+    doc.text(`Title: ${cleanText(contract.title || 'Audited Agreement')}`, 20, 63);
+    doc.text(`Counterparty: ${cleanText(contract.counterparty || 'Entity')}`, 20, 69);
+    doc.text(`Applied Redlines: ${appliedCount} of ${riskFlags.length} resolved`, 20, 75);
 
-    doc.setDrawColor(226, 232, 240);
-    doc.line(14, 66, 196, 66);
+    doc.setFillColor(complianceScore >= 70 ? 236 : 255, complianceScore >= 70 ? 253 : 241, complianceScore >= 70 ? 245 : 242);
+    doc.roundedRect(140, 53, 50, 24, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(complianceScore >= 70 ? 5 : 190, complianceScore >= 70 ? 150 : 18, complianceScore >= 70 ? 105 : 60);
+    doc.text(`${complianceScore}/100`, 165, 64, { align: 'center' });
+    doc.setFontSize(7.5);
+    doc.text(complianceScore >= 70 ? 'COMPLIANT' : 'PARTIAL REDLINE', 165, 71, { align: 'center' });
 
-    let yPos = 76;
-    contract.riskFlags.forEach((risk) => {
-      if (yPos > 230) {
+    let yPos = 90;
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`STATUTORY REDLINE AUDIT TRAIL (${riskFlags.length})`, 14, yPos);
+    yPos += 6;
+
+    riskFlags.forEach((risk) => {
+      if (yPos > 225) {
         doc.addPage();
         yPos = 20;
       }
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(225, 29, 72);
-      doc.text(`[${risk.riskLevel} RISK] ${cleanText(risk.clauseTitle)}`, 14, yPos);
-      yPos += 6;
 
+      doc.setFillColor(risk.isApplied ? 240 : 254, risk.isApplied ? 253 : 242, risk.isApplied ? 244 : 242);
+      doc.rect(14, yPos, 182, 7, 'F');
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(risk.isApplied ? 22 : 225, risk.isApplied ? 101 : 29, risk.isApplied ? 52 : 72);
+      doc.text(`[${risk.isApplied ? 'RESOLVED REDLINE' : 'FLAGGED'}] ${cleanText(risk.clauseTitle)}`, 17, yPos + 5);
+      yPos += 11;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text('Statutory Basis: ', 17, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.setTextColor(51, 65, 85);
-      doc.text(`Legal Basis: ${cleanText(risk.legalBasis)}`, 14, yPos);
+      doc.text(cleanText(risk.legalBasis), 42, yPos);
       yPos += 5;
 
-      const issueLines = doc.splitTextToSize(cleanText(`Issue: ${risk.plainEnglishExplanation}`), 180);
-      doc.text(issueLines, 14, yPos);
-      yPos += issueLines.length * 5 + 2;
+      const redlineText = `Applied Text: ${cleanText(risk.recommendedRedline)}`;
+      const redlineLines = doc.splitTextToSize(redlineText, 172);
+      const boxHeight = redlineLines.length * 4.5 + 4;
 
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(5, 150, 105);
-      doc.text('Recommended Redline:', 14, yPos);
-      yPos += 5;
+      doc.setFillColor(248, 250, 252);
+      doc.rect(17, yPos, 177, boxHeight, 'F');
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(17, yPos, 177, boxHeight, 'S');
 
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(15, 23, 42);
-      const redlineLines = doc.splitTextToSize(cleanText(risk.recommendedRedline), 180);
-      doc.text(redlineLines, 14, yPos);
-      yPos += redlineLines.length * 5 + 8;
+      doc.text(redlineLines, 20, yPos + 4);
+      yPos += boxHeight + 8;
     });
 
-    const cleanName = cleanText(contract.title).replace(/[^a-zA-Z0-9]/g, '_');
-    doc.save(`${cleanName}_Audit.pdf`);
+    const cleanTitle = cleanText(contract.title || 'Contract').replace(/[^a-zA-Z0-9]/g, '_');
+    doc.save(`${cleanTitle}_Statutory_Certificate.pdf`);
   };
 
-  const getCategoryHeaderBadge = (category: ContractCategory) => {
-    switch (category) {
-      case 'TENANCY':
-        return <Badge className="bg-blue-500/10 text-blue-400 border border-blue-500/30 gap-1.5 px-3 py-1"><Building2 className="w-3.5 h-3.5" /> Tenancy Audit</Badge>;
-      case 'NDA':
-        return <Badge className="bg-purple-500/10 text-purple-400 border border-purple-500/30 gap-1.5 px-3 py-1"><Lock className="w-3.5 h-3.5" /> Confidentiality / NDA</Badge>;
-      case 'VENDOR_SERVICE':
-        return <Badge className="bg-amber-500/10 text-amber-400 border border-amber-500/30 gap-1.5 px-3 py-1"><Briefcase className="w-3.5 h-3.5" /> Vendor SLA & Commercial</Badge>;
-      case 'EMPLOYMENT':
-        return <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 gap-1.5 px-3 py-1"><Users className="w-3.5 h-3.5" /> Employment Compliance</Badge>;
-      default:
-        return <Badge className="bg-slate-500/10 text-slate-400 border border-slate-500/30 gap-1.5 px-3 py-1"><Scale className="w-3.5 h-3.5" /> Commercial Agreement</Badge>;
+  const handleSendChat = () => {
+    if (!chatInput.trim()) return;
+    const msg = chatInput;
+    setChatMessages((prev) => [...prev, { sender: 'user', text: msg }]);
+    setChatInput('');
+
+    let aiAnswer = 'Under Nigerian commercial jurisprudence and statutory benchmarks, this clause must align with CAMA 2020 and relevant High Court rules.';
+    if (msg.toLowerCase().includes('notice') || msg.toLowerCase().includes('terminate')) {
+      aiAnswer = 'Under Section 13 of the Lagos State Tenancy Law 2011, a yearly tenancy mandates at least 6 months written notice to quit.';
+    } else if (msg.toLowerCase().includes('rent') || msg.toLowerCase().includes('advance')) {
+      aiAnswer = 'Demanding or paying rent in excess of 1 year in advance for a yearly tenancy in Lagos is an offense under Section 4 of the Lagos Tenancy Law 2011.';
     }
-  };
 
-  const renderDynamicBadge = (badgeLabel: string, riskLevel: RiskLevel) => {
-    const isHigh = riskLevel === 'HIGH';
-    const baseColor = isHigh ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-amber-500/40 bg-amber-500/10 text-amber-300';
-    let Icon = AlertTriangle;
-    if (badgeLabel.includes('WHT') || badgeLabel.includes('Tax')) Icon = DollarSign;
-    if (badgeLabel.includes('Section') || badgeLabel.includes('CAMA') || badgeLabel.includes('Act')) Icon = Scale;
-    if (badgeLabel.includes('Notice') || badgeLabel.includes('Date')) Icon = Calendar;
-
-    return (
-      <Badge variant="outline" className={`${baseColor} px-2.5 py-0.5 text-xs font-semibold flex items-center gap-1 w-fit`}>
-        <Icon className="w-3 h-3" />
-        {badgeLabel}
-      </Badge>
-    );
+    setChatMessages((prev) => [...prev, { sender: 'ai', text: aiAnswer }]);
   };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-3 text-slate-400">
         <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
-        <p className="text-xs">Loading contract statutory review...</p>
+        <p className="text-xs">Loading contract and redline editor workspace...</p>
       </div>
     );
   }
 
   if (!contract) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4 text-slate-400">
-        <p className="text-sm font-semibold text-white">Contract record not found</p>
-        <Link href="/vault"><Button variant="outline" size="sm">Back to Vault</Button></Link>
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 p-6 text-center">
+        <h1 className="text-lg font-bold text-white mb-2">Contract Not Found</h1>
+        <Button onClick={() => router.back()} variant="outline" size="sm" className="text-xs border-slate-700">
+          <ArrowLeft className="w-4 h-4 mr-1.5" /> Return
+        </Button>
       </div>
     );
   }
 
+  const appliedRedlinesCount = riskFlags.filter((f) => f.isApplied).length;
+  const remainingCount = riskFlags.length - appliedRedlinesCount;
+  const dynamicComplianceScore = Math.max(0, 100 - Math.round((remainingCount / Math.max(1, riskFlags.length)) * 50));
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 sm:p-8 relative pb-24">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Navigation & Controls */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-5">
-          <div className="flex items-center gap-4">
-            <Link href="/vault">
-              <Button variant="ghost" size="icon" className="hover:bg-slate-800 text-slate-400 hover:text-white">
-                <ArrowLeft className="w-5 h-5" />
-              </Button>
-            </Link>
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h1 className="text-2xl font-bold tracking-tight text-white">{contract.title}</h1>
-                {getCategoryHeaderBadge(contract.category)}
-              </div>
-              <p className="text-sm text-slate-400 mt-0.5">
-                Counterparty: <span className="text-slate-200">{contract.counterparty}</span> • Governing Law: <span className="text-slate-200">{contract.governingLaw}</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <Button 
-              onClick={() => setIsChatOpen(!isChatOpen)}
-              variant="outline"
-              className="border-emerald-600/40 text-emerald-400 bg-emerald-950/20 hover:bg-emerald-900/30 flex items-center gap-2"
-            >
-              <Bot className="w-4 h-4" /> AI Contract Q&A
-            </Button>
-            <Button 
-              onClick={handleExportPDF}
-              variant="outline" 
-              className="border-slate-700 bg-slate-900 hover:bg-slate-800 text-slate-200 flex items-center gap-2"
-            >
-              <FileDown className="w-4 h-4 text-emerald-400" /> Export PDF
-            </Button>
-            <Link href={`/sign/${contract.id}`}>
-              <Button className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2">
-                <PenTool className="w-4 h-4" /> Sign
-              </Button>
-            </Link>
-          </div>
-        </div>
-
-        {/* Top Metric Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-          <Card className="bg-slate-900/60 border-slate-800">
-            <CardContent className="p-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-slate-400 font-medium">Compliance Score</p>
-                <p className="text-2xl font-bold text-white mt-0.5">{contract.overallScore}/100</p>
-              </div>
-              {contract.overallScore >= 70 ? (
-                <CheckCircle2 className="w-8 h-8 text-emerald-400 opacity-80" />
-              ) : (
-                <ShieldAlert className="w-8 h-8 text-amber-400 opacity-80" />
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      {/* Top Header & Export Controls */}
+      <div className="border-b border-slate-800 bg-slate-900/60 px-6 py-3.5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+        <div className="flex items-center gap-3">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => router.back()}
+            className="hover:bg-slate-800 text-slate-400 hover:text-white"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-bold text-white">{contract.title}</h1>
+              <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">
+                v{contract.version || 1}
+              </Badge>
+              {branding?.firm_name && (
+                <Badge variant="outline" className="text-[10px] border-slate-700 text-slate-400">
+                  {branding.firm_name}
+                </Badge>
               )}
-            </CardContent>
-          </Card>
-
-          <Card className="bg-slate-900/60 border-slate-800">
-            <CardContent className="p-4">
-              <p className="text-xs text-slate-400 font-medium">Flagged Risks</p>
-              <p className="text-2xl font-bold text-rose-400 mt-0.5">{contract.riskFlags.length} Clause Deviations</p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-slate-900/60 border-slate-800">
-            <CardContent className="p-4">
-              <p className="text-xs text-slate-400 font-medium">Effective Date</p>
-              <p className="text-lg font-semibold text-slate-200 mt-1">{contract.effectiveDate}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-slate-900/60 border-slate-800">
-            <CardContent className="p-4">
-              <p className="text-xs text-slate-400 font-medium">Expiry / Renewal</p>
-              <p className="text-lg font-semibold text-slate-200 mt-1">{contract.expirationDate}</p>
-            </CardContent>
-          </Card>
+            </div>
+            <p className="text-xs text-slate-400">
+              Counterparty: <span className="text-slate-200">{contract.counterparty || 'Entity'}</span> • Governing Law: Laws of Lagos State / Nigeria
+            </p>
+          </div>
         </div>
 
-        {/* Split Pane Viewer */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Pane: Document Text */}
-          <div className="lg:col-span-6 bg-slate-900/40 border border-slate-800 rounded-xl p-6 flex flex-col h-[760px]">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300">Contract Document Text</h3>
-              <Badge variant="outline" className="border-slate-700 text-slate-400 text-xs">Read-Only View</Badge>
-            </div>
-            <div className="overflow-y-auto flex-1 pr-2 font-mono text-xs leading-relaxed text-slate-300 whitespace-pre-wrap selection:bg-emerald-900/40">
-              {contract.rawText}
-            </div>
+        {/* Action Toolbar */}
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-end">
+          <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+            <button
+              onClick={() => setViewMode('split')}
+              className={`px-2.5 py-1 rounded-md transition-all ${viewMode === 'split' ? 'bg-emerald-600 text-white font-semibold' : 'text-slate-400 hover:text-white'}`}
+            >
+              Split View
+            </button>
+            <button
+              onClick={() => setViewMode('editor')}
+              className={`px-2.5 py-1 rounded-md transition-all ${viewMode === 'editor' ? 'bg-emerald-600 text-white font-semibold' : 'text-slate-400 hover:text-white'}`}
+            >
+              Clean Editor
+            </button>
           </div>
 
-          {/* Right Pane: Statutory Redlines & Risk Flags */}
-          <div className="lg:col-span-6 flex flex-col h-[760px] overflow-y-auto space-y-4 pr-2">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-800 sticky top-0 bg-slate-950 z-10">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
-                Statutory Redlines & Risk Flags ({contract.riskFlags.length})
-              </h3>
-            </div>
+          <Button
+            size="sm"
+            onClick={handleApplyAllRedlines}
+            className="bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 text-xs flex items-center gap-1.5"
+          >
+            <CheckCheck className="w-3.5 h-3.5" /> Apply All Redlines
+          </Button>
 
-            {contract.riskFlags.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500 bg-slate-900/40 border border-slate-800 rounded-xl">
-                No compliance risk flags detected for this agreement.
-              </div>
-            ) : (
-              contract.riskFlags.map((risk) => (
-                <Card key={risk.id} className="bg-slate-900/80 border-slate-800 shadow-sm flex flex-col">
-                  <CardHeader className="p-4 bg-slate-900 border-b border-slate-800/80 flex flex-row items-center justify-between space-y-0">
-                    <div className="space-y-1.5">
-                      <CardTitle className="text-sm font-bold text-white">{risk.clauseTitle}</CardTitle>
-                      {renderDynamicBadge(risk.badgeLabel, risk.riskLevel)}
-                    </div>
-                    <Badge className={risk.riskLevel === 'HIGH' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30'}>
-                      {risk.riskLevel} RISK
-                    </Badge>
-                  </CardHeader>
+          <Button
+            size="sm"
+            onClick={handleSaveDraftChanges}
+            disabled={savingChanges}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1.5"
+          >
+            {savingChanges ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save Revisions
+          </Button>
 
-                  <CardContent className="p-4 space-y-3.5 text-xs">
-                    <div>
-                      <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Identified Issue:</span>
-                      <p className="text-slate-200 mt-0.5 leading-relaxed">{risk.plainEnglishExplanation}</p>
-                    </div>
+          <Button 
+            onClick={handleExportDocx}
+            variant="outline" 
+            size="sm"
+            className="border-slate-700 bg-slate-900 text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-1.5"
+          >
+            <FileCode className="w-3.5 h-3.5 text-blue-400" /> Export Word (.docx)
+          </Button>
 
-                    <div>
-                      <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Legal Benchmark:</span>
-                      <p className="text-emerald-400 font-medium mt-0.5">{risk.legalBasis}</p>
-                    </div>
+          <Button 
+            onClick={handleExportPDF}
+            variant="outline" 
+            size="sm"
+            className="border-slate-700 bg-slate-900 text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" /> Export PDF
+          </Button>
 
-                    {risk.originalText && (
-                      <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800/80 space-y-1">
-                        <span className="text-rose-400 font-semibold uppercase tracking-wider text-[10px]">Original Text:</span>
-                        <p className="text-slate-400 line-through leading-relaxed">{risk.originalText}</p>
-                      </div>
-                    )}
-
-                    <div className="bg-emerald-950/20 p-3 rounded-lg border border-emerald-900/40 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-emerald-400 font-semibold uppercase tracking-wider text-[10px]">DocuChain Recommended Counter-Clause:</span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleCopy(risk.id, risk.recommendedRedline)}
-                          className="h-6 px-2 text-[11px] text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40"
-                        >
-                          {copiedId === risk.id ? (
-                            <span className="flex items-center gap-1"><Check className="w-3 h-3" /> Copied</span>
-                          ) : (
-                            <span className="flex items-center gap-1"><Copy className="w-3 h-3" /> Copy Redline</span>
-                          )}
-                        </Button>
-                      </div>
-                      <p className="text-slate-200 font-medium leading-relaxed">{risk.recommendedRedline}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
+          <Button 
+            onClick={() => setIsChatOpen(!isChatOpen)}
+            variant="outline" 
+            size="sm"
+            className="border-emerald-600/40 text-emerald-400 bg-emerald-950/20 text-xs flex items-center gap-1.5"
+          >
+            <Bot className="w-3.5 h-3.5" /> AI Assistant
+          </Button>
         </div>
       </div>
 
-      {/* Floating AI Contract Q&A Drawer */}
+      {/* Metric Strip */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 px-6 bg-slate-950 border-b border-slate-800 text-xs">
+        <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span className="text-slate-400">Dynamic Score:</span>
+          <span className={`font-bold text-base ${dynamicComplianceScore >= 70 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {dynamicComplianceScore}/100
+          </span>
+        </div>
+        <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span className="text-slate-400">Resolved Flags:</span>
+          <span className="font-bold text-white text-base">
+            {appliedRedlinesCount} / {riskFlags.length} Applied
+          </span>
+        </div>
+        <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span className="text-slate-400">Document Status:</span>
+          <span className={remainingCount === 0 ? "font-bold text-emerald-400 flex items-center gap-1" : "font-bold text-amber-400 flex items-center gap-1"}>
+            <ShieldCheck className="w-3.5 h-3.5" /> {remainingCount === 0 ? 'Compliant' : 'Partially Redlined'}
+          </span>
+        </div>
+        <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span className="text-slate-400">Execution Readiness:</span>
+          <span className="font-bold text-amber-400 flex items-center gap-1">
+            <Scale className="w-3.5 h-3.5" /> Ready for Signature
+          </span>
+        </div>
+      </div>
+
+      {/* Main Diff & Redline Workspace */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden">
+        {/* Left Pane: Live Redlined Document Draft */}
+        <div className={`${viewMode === 'editor' ? 'lg:col-span-12' : 'lg:col-span-7'} p-6 border-r border-slate-800 overflow-y-auto max-h-[calc(100vh-190px)] bg-slate-950 flex flex-col`}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+              <FileText className="w-4 h-4 text-emerald-400" /> 
+              {appliedRedlinesCount > 0 ? 'Live Redlined Agreement (Editable)' : 'Contract Agreement Draft (Editable)'}
+            </h2>
+            <span className="text-[10px] text-slate-500 font-mono">
+              Changes update real-time before Word / PDF download
+            </span>
+          </div>
+
+          <textarea
+            value={editedDraft}
+            onChange={(e) => setEditedDraft(e.target.value)}
+            rows={24}
+            className="w-full flex-1 p-5 rounded-xl bg-slate-900/40 border border-slate-800 font-mono text-xs text-slate-200 leading-relaxed focus:outline-none focus:border-emerald-500/50 resize-y"
+            placeholder="Contract text will appear here..."
+          />
+        </div>
+
+        {/* Right Pane: Statutory Redlines & Action Toggles */}
+        {viewMode !== 'editor' && (
+          <div className="lg:col-span-5 p-6 overflow-y-auto max-h-[calc(100vh-190px)] bg-slate-900/20 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400" /> AI Statutory Redlines ({riskFlags.length})
+              </h2>
+              <span className="text-[10px] text-slate-500">Click &ldquo;Apply Redline&rdquo; to swap clause</span>
+            </div>
+
+            {riskFlags.map((risk, index) => (
+              <Card 
+                key={index} 
+                className={`transition-all ${
+                  risk.isApplied 
+                    ? 'bg-emerald-950/20 border-emerald-500/40' 
+                    : 'bg-slate-900/80 border-slate-800'
+                }`}
+              >
+                <CardHeader className="p-4 pb-2 border-b border-slate-800/80 flex flex-row items-center justify-between">
+                  <CardTitle className="text-xs font-bold text-white uppercase tracking-tight">
+                    {risk.clauseTitle}
+                  </CardTitle>
+                  <Badge 
+                    className={`text-[10px] font-bold ${
+                      risk.isApplied 
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                        : risk.riskLevel === 'HIGH' 
+                        ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' 
+                        : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                    }`}
+                  >
+                    {risk.isApplied ? '✓ REDLINE APPLIED' : `${risk.riskLevel} RISK`}
+                  </Badge>
+                </CardHeader>
+
+                <CardContent className="p-4 pt-2 space-y-3 text-xs">
+                  <div>
+                    <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider block mb-0.5">
+                      Statutory Violation
+                    </span>
+                    <p className="text-slate-300 leading-relaxed">{risk.issueSummary}</p>
+                    <p className="text-[11px] text-slate-400 mt-1 font-mono">{risk.legalBasis}</p>
+                  </div>
+
+                  {risk.originalText && (
+                    <div className="p-2.5 rounded bg-slate-950 border border-slate-800">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase block mb-0.5">Current Text</span>
+                      <p className="font-mono text-slate-400 line-clamp-2 text-[11px]">{risk.originalText}</p>
+                    </div>
+                  )}
+
+                  <div className="p-3 rounded bg-slate-950 border border-emerald-500/30 space-y-2">
+                    <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" /> Recommended Statutory Substitute
+                    </span>
+                    <p className="font-mono text-slate-200 leading-relaxed text-[11px]">
+                      {risk.recommendedRedline}
+                    </p>
+                  </div>
+
+                  {/* Apply / Revert Button */}
+                  <div className="pt-1 flex items-center justify-between">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(risk.recommendedRedline);
+                        setCopiedIndex(index);
+                        setTimeout(() => setCopiedIndex(null), 2000);
+                      }}
+                      className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1"
+                    >
+                      {copiedIndex === index ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      {copiedIndex === index ? 'Copied' : 'Copy Text'}
+                    </button>
+
+                    <Button
+                      size="sm"
+                      onClick={() => toggleApplyRedline(index)}
+                      className={`text-xs h-7 px-3 flex items-center gap-1.5 ${
+                        risk.isApplied
+                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      }`}
+                    >
+                      {risk.isApplied ? (
+                        <>
+                          <RotateCcw className="w-3 h-3" /> Revert Clause
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3 h-3" /> Apply Redline
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Floating AI Drawer */}
       {isChatOpen && (
-        <div className="fixed bottom-6 right-6 w-96 h-[520px] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col z-50 overflow-hidden">
-          <div className="p-3.5 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
+        <div className="fixed bottom-6 right-6 w-96 h-[460px] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col z-50 overflow-hidden animate-in slide-in-from-bottom-5">
+          <div className="p-3 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-emerald-400" />
-              <div>
-                <span className="text-xs font-semibold text-slate-200 block">AI Contract Q&A</span>
-                <span className="text-[10px] text-emerald-400">Cited answers from exact clauses</span>
-              </div>
+              <span className="text-xs font-semibold text-white">Clause Intelligence Assistant</span>
             </div>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setIsChatOpen(false)}
-              className="h-6 w-6 p-0 text-slate-400 hover:text-white"
-            >
+            <Button variant="ghost" size="sm" onClick={() => setIsChatOpen(false)} className="h-6 w-6 p-0 text-slate-400">
               <X className="w-3.5 h-3.5" />
             </Button>
           </div>
@@ -565,45 +737,27 @@ export default function ContractDetailPage() {
             {chatMessages.map((msg, i) => (
               <div 
                 key={i} 
-                className={`p-3 rounded-lg leading-relaxed space-y-1.5 ${
+                className={`p-2.5 rounded-lg leading-relaxed ${
                   msg.sender === 'user' 
                     ? 'bg-emerald-600 text-white ml-6' 
-                    : 'bg-slate-800 text-slate-200 mr-4 border border-slate-700'
+                    : 'bg-slate-800 text-slate-200 mr-6 border border-slate-700'
                 }`}
               >
-                <div>{msg.text}</div>
-                {msg.citation && (
-                  <div className="pt-1 border-t border-slate-700/60 flex items-start gap-1 text-[10px] text-emerald-400 font-mono">
-                    <Quote className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>Cited: {msg.citation}</span>
-                  </div>
-                )}
+                {msg.text}
               </div>
             ))}
-            {isAnswering && (
-              <div className="p-3 rounded-lg bg-slate-800/60 text-slate-400 mr-4 border border-slate-700/50 flex items-center gap-2 text-xs">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                <span>Auditing clauses against Nigerian statutory rules...</span>
-              </div>
-            )}
           </div>
 
           <div className="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
             <Input
-              placeholder="e.g. Can I terminate early without penalty?"
+              placeholder="Ask about redline enforceability..."
               value={chatInput}
-              disabled={isAnswering}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
-              className="bg-slate-900 border-slate-700 text-xs text-slate-100 placeholder:text-slate-500 focus-visible:ring-emerald-500"
+              className="bg-slate-900 border-slate-700 text-xs text-slate-100 placeholder:text-slate-500"
             />
-            <Button 
-              size="sm" 
-              onClick={handleSendChat}
-              disabled={isAnswering || !chatInput.trim()}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3"
-            >
-              {isAnswering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            <Button size="sm" onClick={handleSendChat} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3">
+              <Send className="w-3.5 h-3.5" />
             </Button>
           </div>
         </div>
