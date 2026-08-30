@@ -1,64 +1,90 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
 
-export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const workspaceId = searchParams.get('workspaceId');
-
-    if (!workspaceId) {
-      return NextResponse.json({ error: 'workspaceId required' }, { status: 400 });
-    }
-
-    const { data: members, error } = await supabase
-      .from('workspace_members')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    return NextResponse.json({ success: true, members: members || [] });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { workspaceId, userId, email, role, permissions } = body;
+    const { fullName, email, role, department, canSign, workspaceId } = await req.json();
 
-    if (!workspaceId || !role) {
-      return NextResponse.json({ error: 'workspaceId and role are required' }, { status: 400 });
+    if (!fullName || !email) {
+      return NextResponse.json({ error: 'Name and email are required' }, { status: 400 });
     }
 
-    // Default permissions based on role
-    const defaultPermissions = {
-      FIRM_ADMIN: { can_audit: true, can_redline: true, can_export_pdf: true, can_manage_clients: true, can_manage_billing: true, can_manage_playbooks: true },
-      SENIOR_PARTNER: { can_audit: true, can_redline: true, can_export_pdf: true, can_manage_clients: true, can_manage_billing: false, can_manage_playbooks: true },
-      ASSOCIATE: { can_audit: true, can_redline: true, can_export_pdf: true, can_manage_clients: false, can_manage_billing: false, can_manage_playbooks: false },
-      PARALEGAL: { can_audit: true, can_redline: false, can_export_pdf: true, can_manage_clients: false, can_manage_billing: false, can_manage_playbooks: false },
-      BILLING_MANAGER: { can_audit: false, can_redline: false, can_export_pdf: false, can_manage_clients: false, can_manage_billing: true, can_manage_playbooks: false },
-    };
+    const cleanEmail = email.trim().toLowerCase();
 
-    const targetPermissions = permissions || defaultPermissions[role as keyof typeof defaultPermissions] || defaultPermissions.ASSOCIATE;
+    // 1. Resolve workspace
+    const wsId = workspaceId || 'default-law-firm-workspace';
 
-    const { data, error } = await supabase
+    // 2. Insert member record with PENDING status
+    const { data: member, error: dbErr } = await supabase
       .from('workspace_members')
-      .insert({
-        workspace_id: workspaceId,
-        user_id: userId,
-        role,
-        permissions: targetPermissions,
-        is_active: true,
-      })
+      .upsert({
+        workspace_id: wsId,
+        full_name: fullName,
+        email: cleanEmail,
+        role: role || 'ASSOCIATE',
+        department: department || 'Commercial Practice',
+        can_sign: Boolean(canSign),
+        status: 'PENDING'
+      }, { onConflict: 'email' })
       .select()
       .single();
 
-    if (error) throw error;
+    if (dbErr) {
+      console.error('Member Insert Error:', dbErr);
+      return NextResponse.json({ error: dbErr.message }, { status: 500 });
+    }
 
-    return NextResponse.json({ success: true, member: data });
+    // 3. Provision User Private Vault
+    await supabase.from('user_vaults').upsert({
+      user_id: member.id,
+      name: `${fullName}'s Private Vault`,
+      workspace_id: wsId,
+      allocated_storage_mb: 500,
+      used_storage_mb: 0
+    }, { onConflict: 'user_id' });
+
+    // 4. Dispatch Email via Resend API
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const fromDomain = process.env.RESEND_FROM_EMAIL || 'DocuChain.NG <onboarding@resend.dev>';
+    const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/invite/accept?email=${encodeURIComponent(cleanEmail)}&name=${encodeURIComponent(fullName)}`;
+
+    if (resendApiKey) {
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${resendApiKey}`
+          },
+          body: JSON.stringify({
+            from: fromDomain,
+            to: [cleanEmail],
+            subject: `Action Required: Invitation to join Law Firm Workspace on DocuChain.NG`,
+            html: `
+              <div style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 32px; border-radius: 12px;">
+                <h2 style="color: #10b981; margin-bottom: 8px;">DocuChain.NG Law Practice Hub</h2>
+                <p>Hello <strong>${fullName}</strong>,</p>
+                <p>You have been provisioned an isolated private vault and assigned to the <strong>${department}</strong> department as an <strong>${role}</strong>.</p>
+                <div style="margin: 24px 0;">
+                  <a href="${inviteUrl}" style="background-color: #10b981; color: #020617; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">
+                    Claim Your Private Legal Vault &rarr;
+                  </a>
+                </div>
+                <p style="font-size: 12px; color: #64748b;">Statutory Compliance: CAMA 2020 | NDPA 2023 Compliant Practice Architecture.</p>
+              </div>
+            `
+          })
+        });
+      } catch (emailErr) {
+        console.warn('Resend email delivery skipped or in sandbox limitation:', emailErr);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      member,
+      inviteUrl
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

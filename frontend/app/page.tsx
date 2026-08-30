@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { 
   Scale, 
@@ -13,19 +13,138 @@ import {
   AlertTriangle,
   Bot,
   PenTool,
-  Check
+  Check,
+  Building2,
+  Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/context/AuthContext';
 
-type PlanTier = 'FREE' | 'STARTER' | 'BUSINESS' | 'LEGAL_TEAM' | 'LAW_FIRM_RESELLER' | 'ONE_TIME_REVIEW';
-
 export default function LandingPage() {
   const { user } = useAuth();
 
-  const handleSelectPlan = (tier: PlanTier) => {
+  // Target Tab: 'sme' (default) | 'law-firm'
+  const [targetAudience, setTargetAudience] = useState<'sme' | 'law-firm'>('sme');
+  // Billing Cycle: 'monthly' | 'annual'
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
+
+  const smePlans = [
+    {
+      name: 'Growing Business',
+      description: 'Automated contract risk detection for startups and growing enterprises.',
+      quota: '50 Contracts / mo • 1 In-House Admin',
+      priceMonthly: '₦10,000',
+      priceAnnual: '₦100,000',
+      popular: false,
+      buttonText: 'Select Growing Business',
+      tierKey: 'STARTER',
+      features: [
+        'Smart Contract Clause Extraction',
+        'Lagos Tenancy & Labour Risk Scoring',
+        'Centralized Document Vault',
+        'Basic Expiry & Renewal Alerts',
+      ],
+    },
+    {
+      name: 'Corporate Team',
+      description: 'Comprehensive legal risk control and clause negotiation intelligence.',
+      quota: '500 Contracts / mo • 5 In-House Members',
+      priceMonthly: '₦30,000',
+      priceAnnual: '₦300,000',
+      popular: true,
+      popularLabel: 'MOST POPULAR',
+      buttonText: 'Select Corporate Team',
+      tierKey: 'BUSINESS',
+      features: [
+        'Everything in Growing Business',
+        'Full Clause Risk Scoring & Heatmaps',
+        'Cross-Vault Semantic Search',
+        'Statutory Obligations & Notice Tracker',
+        'Export Redlined DOCX & Summaries',
+      ],
+    },
+    {
+      name: 'Corporate Counsel',
+      description: 'For corporate legal departments handling heavy vendor and procurement workflows.',
+      quota: 'Unlimited Contracts • Unlimited In-House Access',
+      priceMonthly: '₦75,000',
+      priceAnnual: '₦750,000',
+      popular: false,
+      buttonText: 'Select Corporate Counsel',
+      tierKey: 'LEGAL_TEAM',
+      features: [
+        'Everything in Corporate Team',
+        'Template & Precedent Clause Library',
+        'Multi-User Team Collaboration',
+        'Guest Reviewer & Client Portal Access',
+        'Priority Technical Support',
+      ],
+    },
+  ];
+
+  const lawFirmPlans = [
+    {
+      name: 'Starter Practice',
+      description: 'Ideal for solo practitioners and boutique chambers requiring Nigerian statutory compliance.',
+      quota: '25 Contracts / mo • 2 Counsel Members',
+      priceMonthly: '₦75,000',
+      priceAnnual: '₦750,000',
+      popular: false,
+      buttonText: 'Select Starter Practice',
+      tierKey: 'STARTER',
+      features: [
+        'Lagos Tenancy Law 2011 S.4 & S.13 Redlines',
+        'CAMA 2020 Sec 102 Digital E-Sign Stamping',
+        'Labour Act & 2024 Min. Wage (₦70k) Compliance',
+        'Downloadable Stamped Verification Certificates',
+        'Client-Isolated Contract Repositories',
+      ],
+    },
+    {
+      name: 'Law Firm Reseller (Pro)',
+      description: 'Full white-label operating system to monetize AI legal reviews directly to your corporate clients.',
+      quota: '150 Contracts / mo • 10 Counsel & Partner Seats',
+      priceMonthly: '₦195,000',
+      priceAnnual: '₦1,950,000',
+      popular: true,
+      popularLabel: 'MOST POPULAR RESELLER',
+      buttonText: 'Select Law Firm Reseller (Pro)',
+      tierKey: 'LAW_FIRM_RESELLER',
+      features: [
+        'Everything in Starter Practice',
+        'White-Label Subdomain Branding (*.docuchain.ng)',
+        'Multi-Client Vault Isolation (/reseller/clients)',
+        'Custom AI Playbooks (Mandatory & Forbidden Clauses)',
+        'Client Self-Service Portal (/portal)',
+        'Tenant-Scoped pgvector Semantic Search',
+        'Granular Team RBAC (Partner / Associate / Paralegal)',
+      ],
+    },
+    {
+      name: 'Institutional Legal OS',
+      description: 'For multi-partner firms and enterprise chambers with custom governance and high-volume workloads.',
+      quota: 'Unlimited Contracts • Unlimited Seats & Matters',
+      priceMonthly: '₦450,000',
+      priceAnnual: '₦4,500,000',
+      popular: false,
+      buttonText: 'Select Institutional Legal OS',
+      tierKey: 'LEGAL_TEAM',
+      features: [
+        'Everything in Reseller Pro',
+        'Dedicated Custom CNAME Domains (e.g. legal.firm.com)',
+        'Immutable Audit Trail (NDPA 2023 DPO Compliance)',
+        'Priority AI Token & Ingestion Throughput',
+        'Custom Ingestion Webhooks & API Access',
+        'Dedicated Legal Engineering SLA & Migration',
+      ],
+    },
+  ];
+
+  const activePlans = targetAudience === 'sme' ? smePlans : lawFirmPlans;
+
+  const handleSelectPlan = (tier: string) => {
     localStorage.setItem('docuchain_selected_plan', tier);
     if (!user) {
       window.location.href = `/auth?plan=${tier}`;
@@ -58,9 +177,9 @@ export default function LandingPage() {
 
           <div className="flex items-center gap-3">
             {user ? (
-              <Link href="/vault">
-                <Button className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-2">
-                  Open Vault <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              <Link href="/dashboard">
+                <Button className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-2 font-semibold">
+                  Dashboard <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
                 </Button>
               </Link>
             ) : (
@@ -71,7 +190,7 @@ export default function LandingPage() {
                   </Button>
                 </Link>
                 <Link href="/auth">
-                  <Button className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 shadow-lg shadow-emerald-950">
+                  <Button className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 shadow-lg shadow-emerald-950 font-semibold">
                     Get Started Free
                   </Button>
                 </Link>
@@ -95,16 +214,16 @@ export default function LandingPage() {
         </h1>
 
         <p className="text-slate-400 text-base sm:text-lg max-w-2xl mx-auto leading-relaxed">
-          US tools like Ironclad don&apos;t know Lagos Tenancy Law, CAMA 2020, or FIRS tax rules. DocuChain automatically audits, redlines, monitors statutory notice windows, and answers cross-vault queries in seconds.
+          Foreign tools don&apos;t know Lagos Tenancy Law, CAMA 2020, or FIRS rules. DocuChain automatically audits, redlines, monitors statutory notice windows, and answers cross-vault queries in seconds.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
           <Button 
-            onClick={() => handleSelectPlan('FREE')}
+            onClick={() => handleSelectPlan('STARTER')}
             size="lg" 
             className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-8 h-12 shadow-lg shadow-emerald-950 flex items-center gap-2 w-full sm:w-auto"
           >
-            Ingest & Audit Free <ArrowRight className="w-4 h-4" />
+            Ingest &amp; Audit Free <ArrowRight className="w-4 h-4" />
           </Button>
           <a href="#comparison" className="w-full sm:w-auto">
             <Button size="lg" variant="outline" className="border-slate-700 bg-slate-900 text-slate-300 hover:text-white h-12 text-sm px-6 w-full">
@@ -188,7 +307,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Core Intelligence Architecture */}
+      {/* Core Intelligence Features */}
       <section id="features" className="py-20 max-w-6xl mx-auto px-6 space-y-12">
         <div className="text-center space-y-3">
           <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 text-xs">AI-Native Features</Badge>
@@ -279,7 +398,7 @@ export default function LandingPage() {
               </CardHeader>
               <CardContent className="px-6 pb-6 text-xs text-slate-400 space-y-3">
                 <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Understands US/UK law only</p>
-                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Misses Lagos rent & notice caps</p>
+                <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Misses Lagos rent &amp; notice caps</p>
                 <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Unaware of FIRS WHT regulations</p>
                 <p className="flex items-center gap-2 text-rose-400"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Expensive enterprise rollout</p>
               </CardContent>
@@ -295,119 +414,195 @@ export default function LandingPage() {
                 <p className="text-xs text-emerald-500">Accessible local pricing</p>
               </CardHeader>
               <CardContent className="px-6 pb-6 text-xs text-slate-200 space-y-3">
-                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Lagos Tenancy & CAMA 2020 audits</p>
+                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Lagos Tenancy &amp; CAMA 2020 audits</p>
                 <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Automated 90/60/30/7-day notice alerts</p>
                 <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Cross-vault cited clause semantic search</p>
-                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Built-in e-signatures & templates</p>
+                <p className="flex items-center gap-2 text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Built-in e-signatures &amp; templates</p>
               </CardContent>
             </Card>
           </div>
         </div>
       </section>
 
-      {/* Pricing Section with 4 Tiers + One-Time Review */}
-      <section id="pricing" className="py-24 max-w-6xl mx-auto px-6 space-y-12">
-        <div className="text-center space-y-3">
-          <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 text-xs">Transparent NGN Pricing</Badge>
-          <h2 className="text-3xl sm:text-4xl font-extrabold text-white">Simple Plans for Every Growing Business</h2>
-          <p className="text-xs text-slate-400">Choose a monthly tier or order a one-time contract audit.</p>
+      {/* DUAL-AUDIENCE PRICING SECTION */}
+      <section id="pricing" className="py-24 max-w-7xl mx-auto px-6 space-y-10">
+        
+        {/* Header Title */}
+        <div className="text-center space-y-3 max-w-3xl mx-auto">
+          <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-xs px-3 py-1 font-semibold rounded-full">
+            Transparent Nigerian SaaS Pricing
+          </Badge>
+          <h2 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
+            {targetAudience === 'sme'
+              ? 'Simple, Compliant Plans for Growing Businesses'
+              : 'Institutional Plans for Nigerian Law Practices'
+            }
+          </h2>
+          <p className="text-slate-400 text-sm sm:text-base">
+            {targetAudience === 'sme'
+              ? 'Audit vendor SLAs, employment terms, and tenancy agreements against Nigerian statutory requirements.'
+              : 'White-label reseller infrastructure, multi-client vaults, team RBAC, and automated CAMA 2020 execution.'
+            }
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {/* Starter */}
-          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-950/40">
-            <div className="space-y-4">
-              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Starter</h3>
-              <div className="text-3xl font-bold text-white">₦10,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
-              <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 50 contracts</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Smart extraction</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Centralized vault</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Notice alerts</li>
-              </ul>
-            </div>
-            <Button onClick={() => handleSelectPlan('STARTER')} variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
-              Get Started
-            </Button>
-          </div>
-
-          {/* Business (Popular) */}
-          <div className="group bg-slate-900 border-2 border-emerald-500 rounded-2xl p-6 flex flex-col justify-between space-y-6 relative shadow-xl shadow-emerald-950/50 transition-all duration-300 hover:border-emerald-400 hover:-translate-y-1 hover:shadow-2xl hover:shadow-emerald-900/60">
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-              <Badge className="bg-emerald-600 text-white text-[10px] uppercase font-bold tracking-wider">POPULAR</Badge>
-            </div>
-            <div className="space-y-4">
-              <h3 className="text-base font-semibold text-white group-hover:text-emerald-300 transition-colors">Business</h3>
-              <div className="text-3xl font-bold text-white">₦30,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
-              <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 500 contracts</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Clause risk scoring</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Cross-vault Q&A</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Obligation tracker</li>
-              </ul>
-            </div>
-            <Button onClick={() => handleSelectPlan('BUSINESS')} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-950 transition-colors">
-              Get Started
-            </Button>
-          </div>
-
-          {/* Legal Team */}
-          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-950/40">
-            <div className="space-y-4">
-              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Legal Team</h3>
-              <div className="text-3xl font-bold text-white">₦75,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
-              <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Unlimited contracts</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Template library</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Multi-user access</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Client portal</li>
-              </ul>
-            </div>
-            <Button onClick={() => handleSelectPlan('LEGAL_TEAM')} variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
-              Get Started
-            </Button>
-          </div>
-
-          {/* Law Firm Reseller */}
-          <div className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 hover:border-emerald-500/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-950/40">
-            <div className="space-y-4">
-              <h3 className="text-base font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors">Reseller</h3>
-              <div className="text-3xl font-bold text-white">₦150,000 <span className="text-xs text-slate-500 font-normal">/ mo</span></div>
-              <ul className="space-y-2.5 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> White-label portal</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Client vault manager</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> AI Draft & Review</li>
-                <li className="flex items-center gap-2"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Priority WhatsApp</li>
-              </ul>
-            </div>
-            <Button onClick={() => handleSelectPlan('LAW_FIRM_RESELLER')} variant="outline" className="w-full border-slate-700 bg-slate-900/60 text-slate-200 group-hover:border-emerald-500/50 group-hover:text-white group-hover:bg-emerald-950/30 text-xs transition-colors">
-              Contact Sales
-            </Button>
+        {/* Audience Segment Switcher: IN-HOUSE TEAMS & SMES FIRST */}
+        <div className="flex justify-center">
+          <div className="inline-flex p-1.5 rounded-xl bg-slate-900 border border-slate-800 shadow-inner">
+            <button
+              type="button"
+              onClick={() => setTargetAudience('sme')}
+              className={`flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                targetAudience === 'sme'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Building2 className="w-4 h-4" /> For In-House Teams &amp; SMEs
+            </button>
+            <button
+              type="button"
+              onClick={() => setTargetAudience('law-firm')}
+              className={`flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                targetAudience === 'law-firm'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Scale className="w-4 h-4" /> For Law Firms &amp; Resellers
+            </button>
           </div>
         </div>
 
-        {/* Add-On: One-Time Contract Review */}
-        <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-2xl p-6 sm:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl shadow-emerald-950/30">
+        {/* Monthly vs Annual Toggle */}
+        <div className="flex justify-center items-center gap-2">
+          <div className="inline-flex p-1 rounded-full bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setBillingCycle('monthly')}
+              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                billingCycle === 'monthly'
+                  ? 'bg-slate-800 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Monthly Billing
+            </button>
+            <button
+              type="button"
+              onClick={() => setBillingCycle('annual')}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                billingCycle === 'annual'
+                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <span>Annual Billing</span>
+              <span className="text-[10px] text-emerald-400 font-bold">(Save ~18%)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Pricing Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+          {activePlans.map((plan, idx) => {
+            const isPopular = plan.popular;
+            const price = billingCycle === 'monthly' ? plan.priceMonthly : plan.priceAnnual;
+            const period = billingCycle === 'monthly' ? '/mo' : '/yr';
+
+            return (
+              <div
+                key={idx}
+                className={`relative flex flex-col justify-between rounded-2xl p-7 bg-slate-900/70 border transition-all ${
+                  isPopular
+                    ? 'border-emerald-500/60 shadow-2xl shadow-emerald-950/40 ring-1 ring-emerald-500/30'
+                    : 'border-slate-800/80 hover:border-slate-700'
+                }`}
+              >
+                {isPopular && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                    <span className="px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-extrabold uppercase tracking-wider rounded-full shadow-md">
+                      {plan.popularLabel || 'MOST POPULAR'}
+                    </span>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xl font-bold text-white">{plan.name}</h3>
+                    <p className="text-xs text-slate-400 mt-1 min-h-[34px] leading-relaxed">
+                      {plan.description}
+                    </p>
+                  </div>
+
+                  <div className="text-xs font-semibold text-emerald-400">
+                    {plan.quota}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800/80">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-4xl font-extrabold text-white tracking-tight">
+                        {price}
+                      </span>
+                      <span className="text-xs text-slate-400 font-medium">{period}</span>
+                    </div>
+                  </div>
+
+                  <ul className="space-y-3 pt-4 border-t border-slate-800/60 text-xs text-slate-300">
+                    {plan.features.map((feat, fIdx) => (
+                      <li key={fIdx} className="flex items-start gap-2.5">
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <span>{feat}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="pt-8 mt-auto">
+                  <Button
+                    onClick={() => handleSelectPlan(plan.tierKey)}
+                    className={`w-full text-xs font-bold h-11 transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      isPopular
+                        ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-950'
+                        : 'bg-slate-800 hover:bg-slate-700 text-white'
+                    }`}
+                  >
+                    {plan.buttonText} <ArrowRight className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* One-Time Contract Review Banner */}
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
-            <div className="flex items-center gap-2">
-              <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-xs">NO SUBSCRIPTION REQUIRED</Badge>
-              <span className="text-xs text-slate-400 font-medium">One-Off Service</span>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-semibold">
+              <Sparkles className="w-3 h-3" /> NO SUBSCRIPTION REQUIRED • One-Off Service
             </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white">One-Time Contract Review for SMEs</h2>
-            <p className="text-xs text-slate-300 leading-relaxed">
+            <h3 className="text-xl font-bold text-white">
+              One-Time Statutory Contract Review for SMEs
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
               Don&apos;t need a monthly subscription? Have a single tenancy lease, vendor SLA, or employment contract audited against Nigerian statutory law.
             </p>
           </div>
-          <div className="flex flex-col items-center md:items-end gap-3 shrink-0">
-            <div className="text-3xl font-extrabold text-white">₦15,000 <span className="text-xs font-normal text-slate-400">/ contract</span></div>
-            <Button
+
+          <div className="flex sm:flex-col items-center sm:items-end gap-3 shrink-0">
+            <div className="text-right">
+              <span className="text-3xl font-extrabold text-white">₦15,000</span>
+              <span className="text-xs text-slate-400 block">/ single contract review</span>
+            </div>
+            <Button 
               onClick={() => handleSelectPlan('ONE_TIME_REVIEW')}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-6 py-2.5 shadow-lg shadow-emerald-950"
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold h-10 px-5 shadow-lg shadow-emerald-950 cursor-pointer"
             >
               Order Single Review
             </Button>
           </div>
         </div>
+
       </section>
 
       {/* Footer */}

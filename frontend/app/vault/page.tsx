@@ -27,16 +27,12 @@ import {
   Loader2,
   RotateCcw,
   Trash2,
-  Copy,
-  Check,
-  ArrowRight,
   Scale,
-  FileDown,
   Layers,
   Eye,
   FolderLock,
+  PenTool,
 } from "lucide-react";
-import jsPDF from "jspdf";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -50,32 +46,6 @@ export type ContractCategory =
   | "NDA"
   | "VENDOR_SERVICE"
   | "EMPLOYMENT";
-
-interface AuditRiskFlag {
-  clauseTitle: string;
-  originalText: string;
-  riskLevel: "HIGH" | "MEDIUM" | "LOW";
-  issueSummary: string;
-  legalBasis: string;
-  recommendedRedline: string;
-  plainEnglishExplanation: string;
-}
-
-interface AuditResultData {
-  contractCategory: string;
-  overallScore: number;
-  governingLaw: string;
-  parties: {
-    disclosingOrClient?: string;
-    receivingOrVendor?: string;
-  };
-  keyDates?: {
-    effectiveDate?: string;
-    expirationDate?: string;
-  };
-  riskFlags: AuditRiskFlag[];
-  executiveSummary: string;
-}
 
 interface ContractItem {
   id: string;
@@ -187,10 +157,6 @@ function VaultContent() {
   const [isBatchUploading, setIsBatchUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>("");
 
-  // Active Audit Result Modal State
-  const [auditResult, setAuditResult] = useState<AuditResultData | null>(null);
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-
   // Contract Q&A Assistant State
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -207,7 +173,11 @@ function VaultContent() {
     setLoading(true);
 
     try {
-      // 1. Fetch Client Profile and Matters if scoped
+      // 1. Fetch current auth session user
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUser = authData?.user;
+
+      // 2. Fetch Client Profile and Matters if scoped
       if (clientId) {
         const { data: cData } = await supabase
           .from("workspace_clients")
@@ -235,7 +205,7 @@ function VaultContent() {
         setMatters([]);
       }
 
-      // 2. Query contracts WITH relational risk_flags
+      // 3. Query contracts scoped to the current user or client
       let query = supabase
         .from("contracts")
         .select("*, risk_flags(*)")
@@ -243,6 +213,8 @@ function VaultContent() {
 
       if (clientId) {
         query = query.eq("client_id", clientId);
+      } else if (currentUser?.id) {
+        query = query.or(`user_id.eq.${currentUser.id},user_id.is.null`);
       }
 
       if (selectedMatterId) {
@@ -251,23 +223,34 @@ function VaultContent() {
 
       const { data, error } = await query;
 
-      if (error) throw error;
+      let contractsData = data;
+      if (error || !data) {
+        let fallbackQuery = supabase
+          .from("contracts")
+          .select("*")
+          .order("created_at", { ascending: false });
 
-      if (data && data.length > 0) {
-        const mappedItems: ContractItem[] = data.map((item: any) => {
-          let cat: "TENANCY" | "NDA" | "VENDOR_SERVICE" | "EMPLOYMENT" =
-            "VENDOR_SERVICE";
-          const typeStr = (
-            item.contract_type ||
-            item.category ||
-            ""
-          ).toUpperCase();
-          if (typeStr.includes("TENANCY") || typeStr.includes("LEASE"))
-            cat = "TENANCY";
-          else if (typeStr.includes("NDA") || typeStr.includes("CONFIDENTIAL"))
-            cat = "NDA";
-          else if (typeStr.includes("EMPLOYMENT") || typeStr.includes("LABOUR"))
-            cat = "EMPLOYMENT";
+        if (clientId) {
+          fallbackQuery = fallbackQuery.eq("client_id", clientId);
+        } else if (currentUser?.id) {
+          fallbackQuery = fallbackQuery.or(`user_id.eq.${currentUser.id},user_id.is.null`);
+        }
+
+        if (selectedMatterId) {
+          fallbackQuery = fallbackQuery.eq("matter_id", selectedMatterId);
+        }
+
+        const { data: fbData } = await fallbackQuery;
+        contractsData = fbData || [];
+      }
+
+      if (contractsData && contractsData.length > 0) {
+        const mappedItems: ContractItem[] = contractsData.map((item: any) => {
+          let cat: "TENANCY" | "NDA" | "VENDOR_SERVICE" | "EMPLOYMENT" = "VENDOR_SERVICE";
+          const typeStr = (item.contract_type || item.category || "").toUpperCase();
+          if (typeStr.includes("TENANCY") || typeStr.includes("LEASE")) cat = "TENANCY";
+          else if (typeStr.includes("NDA") || typeStr.includes("CONFIDENTIAL")) cat = "NDA";
+          else if (typeStr.includes("EMPLOYMENT") || typeStr.includes("LABOUR")) cat = "EMPLOYMENT";
 
           let metadata = item.metadata;
           if (typeof metadata === "string") {
@@ -278,10 +261,9 @@ function VaultContent() {
             }
           }
 
-          // Filter out resolved risk flags
           const relationalFlags = item.risk_flags || [];
           const openRelationalFlags = relationalFlags.filter(
-            (rf: any) => rf.status !== "RESOLVED"
+            (rf: any) => rf.status !== "RESOLVED" && rf.status !== "APPLIED"
           );
 
           let riskCnt = 0;
@@ -292,36 +274,32 @@ function VaultContent() {
               (rf: any) => rf.status !== "RESOLVED" && !rf.isApplied
             ).length;
           } else {
-            riskCnt = item.risk_score > 30 ? 2 : 0;
+            riskCnt = item.status === "COMPLIANT" || item.status === "Compliant" || item.health_score === 100 ? 0 : (item.risk_score > 30 ? 2 : 0);
           }
 
-          // Accurate dynamic score without falsy 0 bug
           const computedScore =
-            typeof item.risk_score === "number"
-              ? Math.max(0, 100 - item.risk_score)
+            typeof item.health_score === "number"
+              ? item.health_score
               : typeof metadata?.overallScore === "number"
               ? metadata.overallScore
+              : typeof item.risk_score === "number"
+              ? Math.max(0, 100 - item.risk_score)
               : 100;
 
           return {
             id: item.id,
             title: item.title || "Untitled Contract",
             category: cat,
-            counterparty:
-              item.counterparty ||
-              metadata?.counterparty ||
-              "Counterparty Entity",
+            counterparty: item.counterparty || metadata?.counterparty || "Counterparty Entity",
             overallScore: computedScore,
             riskCount: riskCnt,
             status:
-              riskCnt === 0
+              riskCnt === 0 || item.status === "COMPLIANT" || item.status === "Compliant"
                 ? "Compliant"
                 : item.status === "FLAGGED" || item.status === "Flagged"
                 ? "Flagged"
                 : "Audited",
-            lastUpdated: new Date(
-              item.created_at || Date.now()
-            ).toLocaleDateString("en-GB"),
+            lastUpdated: new Date(item.created_at || Date.now()).toLocaleDateString("en-GB"),
             clientId: item.client_id,
             matterId: item.matter_id,
           };
@@ -331,7 +309,7 @@ function VaultContent() {
         setContracts([]);
       }
     } catch (err: any) {
-      console.warn("Supabase contracts query fallback triggered:", err.message);
+      console.warn("Contracts query exception:", err.message);
       setContracts([]);
     } finally {
       setLoading(false);
@@ -385,7 +363,6 @@ function VaultContent() {
       setManualTitle(sample.title);
       setManualText(sample.text);
     }
-    setAuditResult(null);
   };
 
   const handleResetSample = () => {
@@ -394,31 +371,36 @@ function VaultContent() {
       setManualTitle(sample.title);
       setManualText(sample.text);
     }
-    setAuditResult(null);
   };
 
+  // Instant Cascading Deletion
   const handleDeleteContract = async (id: string) => {
     const confirmDelete = window.confirm(
-      "Are you sure you want to delete this contract from this vault?"
+      "Are you sure you want to permanently delete this contract from this vault?"
     );
     if (!confirmDelete) return;
 
     setContracts((prev) => prev.filter((contract) => contract.id !== id));
 
-    if (!id.startsWith("c-")) {
-      try {
-        const { error } = await supabase
-          .from("contracts")
-          .delete()
-          .eq("id", id);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error("Failed to delete contract from database:", err.message);
+    try {
+      await supabase.from("risk_flags").delete().eq("contract_id", id);
+      await supabase.from("contract_signatures").delete().eq("contract_id", id);
+      await supabase.from("contract_embeddings").delete().eq("contract_id", id);
+      await supabase.from("statutory_obligations").delete().eq("contract_id", id);
+
+      const { error } = await supabase.from("contracts").delete().eq("id", id);
+
+      if (error) {
+        console.error("Database deletion failed:", error.message);
+        alert("Failed to delete from database: " + error.message);
+        loadContracts();
       }
+    } catch (err: any) {
+      console.error("Deletion error:", err.message);
+      loadContracts();
     }
   };
 
-  // Multi-file Binary Ingestion with Client ID & Matter ID scoping
   const handleBatchUpload = async () => {
     if (batchFiles.length === 0) return;
     setIsBatchUploading(true);
@@ -431,41 +413,42 @@ function VaultContent() {
       batchFiles.forEach((file) => {
         formData.append("files", file);
       });
-      if (clientId) {
-        formData.append("clientId", clientId);
-      }
-      if (selectedMatterId) {
-        formData.append("matterId", selectedMatterId);
-      }
+      if (clientId) formData.append("clientId", clientId);
+      if (selectedMatterId) formData.append("matterId", selectedMatterId);
 
-      const res = await fetch("http://localhost:5000/api/review/batch-audit", {
+      const res = await fetch("/api/ingest", {
         method: "POST",
         body: formData,
       });
 
-      if (!res.ok)
-        throw new Error(`Batch upload failed with status ${res.status}`);
-      const data = await res.json();
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Batch upload failed with status ${res.status}`);
+      }
 
+      const data = await res.json();
       await loadContracts();
       setBatchFiles([]);
       setShowUploadModal(false);
 
-      if (data.results?.[0]?.dbRecord?.id) {
-        router.push(`/contracts/${data.results[0].dbRecord.id}`);
+      const targetContractId =
+        data.contractId ||
+        data.results?.[0]?.dbRecord?.id ||
+        data.contracts?.[0]?.id ||
+        data.contract?.id;
+
+      if (targetContractId) {
+        router.push(`/contracts/${targetContractId}`);
       }
     } catch (error: any) {
       console.error("Batch upload error:", error.message || error);
-      alert(
-        "Batch audit failed. Please ensure the backend server is running on port 5000."
-      );
+      alert(error.message || "Batch audit failed. Please try again.");
     } finally {
       setIsBatchUploading(false);
       setUploadProgress("");
     }
   };
 
-  // Manual Audit Ingestion with Client ID & Matter ID scoping
   const handleManualAudit = async () => {
     if (!manualText.trim() || !manualTitle.trim()) {
       alert("Please ensure both Contract Title and Agreement Text are provided.");
@@ -475,7 +458,7 @@ function VaultContent() {
     setIsAuditing(true);
 
     try {
-      const res = await fetch("http://localhost:5000/api/review/audit", {
+      const res = await fetch("/api/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -488,23 +471,27 @@ function VaultContent() {
       });
 
       if (!res.ok) {
-        throw new Error(`Statutory audit failed with status ${res.status}`);
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Statutory audit failed with status ${res.status}`);
       }
 
       const data = await res.json();
+      const targetContractId =
+        data.contractId ||
+        data.dbRecord?.id ||
+        data.contract?.id ||
+        data.id;
 
-      if (data.dbRecord?.id) {
+      if (targetContractId) {
         setShowUploadModal(false);
-        router.push(`/contracts/${data.dbRecord.id}`);
+        router.push(`/contracts/${targetContractId}`);
       } else {
         await loadContracts();
         setShowUploadModal(false);
       }
     } catch (err: any) {
       console.error("Audit execution error:", err.message || err);
-      alert(
-        "Failed to audit document. Please ensure your backend is running on port 5000."
-      );
+      alert(err.message || "Failed to audit document. Please try again.");
     } finally {
       setIsAuditing(false);
     }
@@ -538,13 +525,13 @@ function VaultContent() {
       userMsg.toLowerCase().includes("tenancy")
     ) {
       aiResponse =
-        "Under Section 4 of Lagos State Tenancy Law 2011, it is unlawful to demand or receive rent exceeding 1 year for a yearly tenancy. Section 13 mandates a minimum 6-month notice to quit.";
+        "Under Section 4 of Lagos State Tenancy Law 2011, it is unlawful to demand or receive rent exceeding 1 year for a yearly tenancy. Section 13 mandates a minimum 6-month notice to quit via Form TL5.";
     } else if (
       userMsg.toLowerCase().includes("wage") ||
       userMsg.toLowerCase().includes("salary")
     ) {
       aiResponse =
-        "The National Minimum Wage Act mandates a statutory baseline of NGN 70,000 per month across Nigeria. Any contractual agreement below this threshold is illegal and unenforceable.";
+        "The National Minimum Wage Act mandates a statutory baseline of ₦70,000 per month across Nigeria. Any contractual agreement below this threshold is illegal and unenforceable.";
     } else if (
       userMsg.toLowerCase().includes("nda") ||
       userMsg.toLowerCase().includes("confidential")
@@ -650,7 +637,7 @@ function VaultContent() {
               <Button
                 variant="outline"
                 size="sm"
-                className="border-slate-700 bg-slate-900 text-xs text-slate-300 hover:text-white"
+                className="border-slate-700 bg-slate-900 text-xs text-slate-300 hover:text-white cursor-pointer"
               >
                 Exit Scoped View (Global Vault)
               </Button>
@@ -676,23 +663,20 @@ function VaultContent() {
             <Button
               onClick={() => setIsChatOpen(!isChatOpen)}
               variant="outline"
-              className="border-emerald-600/40 text-emerald-400 bg-emerald-950/20 hover:bg-emerald-900/30 flex items-center gap-2"
+              className="border-emerald-600/40 text-emerald-400 bg-emerald-950/20 hover:bg-emerald-900/30 flex items-center gap-2 cursor-pointer"
             >
               <Bot className="w-4 h-4" /> Legal AI Assistant
             </Button>
             <Button
-              onClick={() => {
-                setAuditResult(null);
-                setShowUploadModal(true);
-              }}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 shadow-lg shadow-emerald-950"
+              onClick={() => setShowUploadModal(true)}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 shadow-lg shadow-emerald-950 cursor-pointer font-semibold"
             >
               <Upload className="w-4 h-4" /> Ingest &amp; Audit Contract
             </Button>
           </div>
         </div>
 
-        {/* Matters / Folders Sub-Bar (Visible when inside a scoped client vault) */}
+        {/* Matters / Folders Sub-Bar */}
         {clientProfile && (
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 bg-slate-900/50 border border-slate-800 rounded-xl">
             <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
@@ -703,7 +687,7 @@ function VaultContent() {
                 size="sm"
                 variant={selectedMatterId === null ? "default" : "outline"}
                 onClick={() => setSelectedMatterId(null)}
-                className={`text-xs h-7 px-3 ${
+                className={`text-xs h-7 px-3 cursor-pointer ${
                   selectedMatterId === null
                     ? "bg-emerald-600 text-white"
                     : "border-slate-700 text-slate-300 hover:text-white"
@@ -717,7 +701,7 @@ function VaultContent() {
                   size="sm"
                   variant={selectedMatterId === m.id ? "default" : "outline"}
                   onClick={() => setSelectedMatterId(m.id)}
-                  className={`text-xs h-7 px-3 ${
+                  className={`text-xs h-7 px-3 cursor-pointer ${
                     selectedMatterId === m.id
                       ? "bg-emerald-600 text-white"
                       : "border-slate-700 text-slate-300 hover:text-white"
@@ -732,7 +716,7 @@ function VaultContent() {
               size="sm"
               variant="outline"
               onClick={() => setShowMatterModal(true)}
-              className="border-slate-700 bg-slate-950 text-xs text-emerald-400 hover:bg-slate-900 flex items-center gap-1.5 h-7"
+              className="border-slate-700 bg-slate-950 text-xs text-emerald-400 hover:bg-slate-900 flex items-center gap-1.5 h-7 cursor-pointer"
             >
               <FolderPlus className="w-3.5 h-3.5" /> New Matter Folder
             </Button>
@@ -758,7 +742,7 @@ function VaultContent() {
                   setShowUploadModal(false);
                   setBatchFiles([]);
                 }}
-                className="text-slate-400 hover:text-white"
+                className="text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -769,11 +753,11 @@ function VaultContent() {
                 size="sm"
                 variant={ingestTab === "manual" ? "default" : "outline"}
                 onClick={() => setIngestTab("manual")}
-                className={
+                className={`cursor-pointer ${
                   ingestTab === "manual"
                     ? "bg-emerald-600 text-white"
                     : "border-slate-700 text-slate-300"
-                }
+                }`}
               >
                 <FileEdit className="w-4 h-4 mr-1.5" /> Type or Paste Text
               </Button>
@@ -781,14 +765,13 @@ function VaultContent() {
                 size="sm"
                 variant={ingestTab === "upload" ? "default" : "outline"}
                 onClick={() => setIngestTab("upload")}
-                className={
+                className={`cursor-pointer ${
                   ingestTab === "upload"
                     ? "bg-emerald-600 text-white"
                     : "border-slate-700 text-slate-300"
-                }
+                }`}
               >
-                <Layers className="w-4 h-4 mr-1.5" /> Batch File Ingestion
-                (.pdf, .docx, .txt)
+                <Layers className="w-4 h-4 mr-1.5" /> Batch File Ingestion (.pdf, .docx, .txt)
               </Button>
             </div>
 
@@ -815,18 +798,10 @@ function VaultContent() {
                       onChange={(e) => handleCategoryChange(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
-                      <option value="TENANCY">
-                        Tenancy Agreement (Lagos Tenancy Law 2011)
-                      </option>
-                      <option value="NDA">
-                        Non-Disclosure Agreement (NDA)
-                      </option>
-                      <option value="VENDOR_SERVICE">
-                        Vendor Service Level Agreement (SLA)
-                      </option>
-                      <option value="EMPLOYMENT">
-                        Employment Agreement (Labour Act)
-                      </option>
+                      <option value="TENANCY">Tenancy Agreement (Lagos Tenancy Law 2011)</option>
+                      <option value="NDA">Non-Disclosure Agreement (NDA)</option>
+                      <option value="VENDOR_SERVICE">Vendor Service Level Agreement (SLA)</option>
+                      <option value="EMPLOYMENT">Employment Agreement (Labour Act)</option>
                     </select>
                   </div>
                 </div>
@@ -839,7 +814,7 @@ function VaultContent() {
                     <button
                       type="button"
                       onClick={handleResetSample}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-medium"
+                      className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-medium cursor-pointer"
                     >
                       <RotateCcw className="w-3 h-3" /> Reload category sample
                     </button>
@@ -849,7 +824,7 @@ function VaultContent() {
                     placeholder="Paste the agreement clauses or type full contract terms here for statutory auditing..."
                     value={manualText}
                     onChange={(e) => setManualText(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 leading-relaxed"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 leading-relaxed resize-none"
                   />
                 </div>
 
@@ -857,21 +832,18 @@ function VaultContent() {
                   <Button
                     variant="ghost"
                     onClick={() => setShowUploadModal(false)}
-                    className="text-slate-400 hover:text-white"
+                    className="text-slate-400 hover:text-white cursor-pointer"
                   >
                     Cancel
                   </Button>
                   <Button
                     onClick={handleManualAudit}
-                    disabled={
-                      isAuditing || !manualText.trim() || !manualTitle.trim()
-                    }
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 shadow-lg shadow-emerald-950"
+                    disabled={isAuditing || !manualText.trim() || !manualTitle.trim()}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 shadow-lg shadow-emerald-950 cursor-pointer font-semibold"
                   >
                     {isAuditing ? (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin" /> Auditing
-                        Against Nigerian Law...
+                        <Loader2 className="w-4 h-4 animate-spin" /> Auditing Against Nigerian Law...
                       </>
                     ) : (
                       <>
@@ -898,19 +870,16 @@ function VaultContent() {
                     multiple
                     accept=".pdf,.docx,.txt"
                     onChange={(e) => {
-                      if (e.target.files)
-                        setBatchFiles(Array.from(e.target.files));
+                      if (e.target.files) setBatchFiles(Array.from(e.target.files));
                     }}
                     className="absolute inset-0 opacity-0 cursor-pointer"
                   />
                   <UploadCloud className="w-10 h-10 text-slate-400 mx-auto mb-3" />
                   <p className="text-sm font-medium text-slate-200">
-                    Drag &amp; drop files here (.pdf, .docx, .txt), or click to
-                    browse
+                    Drag &amp; drop files here (.pdf, .docx, .txt), or click to browse
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    Direct binary parsing via Mammoth &amp; ContractParser with full
-                    statutory grounding
+                    Direct binary parsing via Mammoth with full statutory grounding
                   </p>
                 </div>
 
@@ -950,24 +919,22 @@ function VaultContent() {
                       setBatchFiles([]);
                       setShowUploadModal(false);
                     }}
-                    className="text-slate-400 hover:text-white"
+                    className="text-slate-400 hover:text-white cursor-pointer"
                   >
                     Cancel
                   </Button>
                   <Button
                     onClick={handleBatchUpload}
                     disabled={isBatchUploading || batchFiles.length === 0}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 shadow-lg shadow-emerald-950"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 shadow-lg shadow-emerald-950 cursor-pointer font-semibold"
                   >
                     {isBatchUploading ? (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin" /> Ingesting &amp;
-                        Auditing...
+                        <Loader2 className="w-4 h-4 animate-spin" /> Ingesting &amp; Auditing...
                       </>
                     ) : (
                       <>
-                        <Sparkles className="w-4 h-4" /> Ingest &amp; Save All (
-                        {batchFiles.length})
+                        <Sparkles className="w-4 h-4" /> Ingest &amp; Save All ({batchFiles.length})
                       </>
                     )}
                   </Button>
@@ -991,7 +958,6 @@ function VaultContent() {
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
             <Filter className="w-4 h-4 text-slate-400 hidden sm:block" />
-
             <select
               value={selectedCategory}
               onChange={(e) =>
@@ -1043,8 +1009,7 @@ function VaultContent() {
                           : "No contracts found in vault"}
                       </p>
                       <p className="text-xs text-slate-600">
-                        Click &ldquo;Ingest &amp; Audit Contract&rdquo; above to
-                        audit and store your first contract.
+                        Click &ldquo;Ingest &amp; Audit Contract&rdquo; above to audit and store your first contract.
                       </p>
                     </td>
                   </tr>
@@ -1084,8 +1049,7 @@ function VaultContent() {
                       <td className="py-4 px-6">
                         {contract.riskCount > 0 ? (
                           <span className="text-rose-400 font-medium">
-                            {contract.riskCount} statutory{" "}
-                            {contract.riskCount === 1 ? "flag" : "flags"}
+                            {contract.riskCount} statutory {contract.riskCount === 1 ? "flag" : "flags"}
                           </span>
                         ) : (
                           <span className="text-emerald-400 font-medium flex items-center gap-1">
@@ -1099,26 +1063,25 @@ function VaultContent() {
                             <Button
                               variant="outline"
                               size="sm"
-                              className="border-slate-700 bg-slate-800/60 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1"
+                              className="border-slate-700 bg-slate-800/60 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1 cursor-pointer"
                             >
-                              <Eye className="w-3.5 h-3.5 text-emerald-400" />{" "}
-                              Review
+                              <Eye className="w-3.5 h-3.5 text-emerald-400" /> Review
                             </Button>
                           </Link>
                           <Link href={`/sign/${contract.id}`}>
                             <Button
                               variant="outline"
                               size="sm"
-                              className="border-slate-700 bg-slate-800/60 hover:bg-slate-700 text-emerald-400 text-xs flex items-center gap-1"
+                              className="border-slate-700 bg-slate-800/60 hover:bg-slate-700 text-purple-400 text-xs flex items-center gap-1 cursor-pointer"
                             >
-                              Sign
+                              <PenTool className="w-3.5 h-3.5" /> Sign
                             </Button>
                           </Link>
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => handleDeleteContract(contract.id)}
-                            className="text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 p-2"
+                            className="text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 p-2 cursor-pointer"
                             title="Delete Contract"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1146,7 +1109,7 @@ function VaultContent() {
                 variant="ghost"
                 size="sm"
                 onClick={() => setShowMatterModal(false)}
-                className="h-6 w-6 p-0 text-slate-400 hover:text-white"
+                className="h-6 w-6 p-0 text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -1180,7 +1143,7 @@ function VaultContent() {
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowMatterModal(false)}
-                  className="text-xs text-slate-400"
+                  className="text-xs text-slate-400 cursor-pointer"
                 >
                   Cancel
                 </Button>
@@ -1188,7 +1151,7 @@ function VaultContent() {
                   size="sm"
                   onClick={handleCreateMatter}
                   disabled={creatingMatter || !newMatterName.trim()}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs cursor-pointer font-semibold"
                 >
                   {creatingMatter ? (
                     <>
@@ -1218,9 +1181,9 @@ function VaultContent() {
               variant="ghost"
               size="sm"
               onClick={() => setIsChatOpen(false)}
-              className="h-6 w-6 p-0 text-slate-400 hover:text-white"
+              className="h-6 w-6 p-0 text-slate-400 hover:text-white cursor-pointer"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </Button>
           </div>
 
@@ -1250,7 +1213,7 @@ function VaultContent() {
             <Button
               size="sm"
               onClick={handleSendChat}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 cursor-pointer"
             >
               <Send className="w-3.5 h-3.5" />
             </Button>
