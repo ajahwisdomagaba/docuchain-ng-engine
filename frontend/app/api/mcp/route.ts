@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { generateQorebitEmbedding } from '@/lib/aiClient';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
-
-const QOREBIT_API_KEY = process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ';
 
 export async function POST(req: NextRequest) {
   try {
@@ -48,20 +47,7 @@ export async function POST(req: NextRequest) {
       const { name, arguments: args } = params;
 
       if (name === 'search_contract_vault') {
-        const embRes = await fetch('https://api.qorebit.ai/v1/embeddings', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${QOREBIT_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: 'text-embedding-3-small',
-            input: args.query,
-          }),
-        });
-
-        const embData = await embRes.json();
-        const embedding = embData.data[0].embedding;
+        const embedding = await generateQorebitEmbedding(String(args.query || ''));
 
         const { data: chunks } = await supabaseAdmin.rpc('match_contract_sections', {
           query_embedding: embedding,

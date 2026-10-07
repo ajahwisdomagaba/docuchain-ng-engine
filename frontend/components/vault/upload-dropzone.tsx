@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Upload, FileText, Sparkles, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { supabase } from '@/lib/supabaseClient';
 
 interface UploadDropzoneProps {
   onAuditComplete?: (result: any) => void;
@@ -41,8 +42,11 @@ export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
         const formData = new FormData();
         formData.append('files', file);
 
-        const res = await fetch('http://localhost:5000/api/review/batch-audit', {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        const res = await fetch('/api/ingest', {
           method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           body: formData,
         });
 
@@ -59,9 +63,14 @@ export function UploadDropzone({ onAuditComplete }: UploadDropzoneProps) {
       } 
       // Mode 2: Raw Text Audit via JSON payload
       else if (activeTab === 'text' && text.trim()) {
-        const res = await fetch('http://localhost:5000/api/review/audit', {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        const res = await fetch('/api/ingest', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             contractText: text,
             title: 'Pasted Agreement Review',

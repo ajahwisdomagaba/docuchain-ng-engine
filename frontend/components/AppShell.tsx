@@ -14,7 +14,8 @@ import {
   FileEdit, 
   Users, 
   ChevronDown, 
-  Layers 
+  Layers,
+  Search,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '../context/AuthContext';
@@ -122,7 +123,10 @@ export default function AppShell({ children }: AppShellProps) {
     pathname === '/auth' || 
     pathname === '/onboarding' || 
     pathname === '/pricing' ||
-    pathname?.startsWith('/invite')
+    pathname?.startsWith('/invite') ||
+    pathname?.startsWith('/portal') ||
+    pathname?.startsWith('/sign') ||
+    pathname?.startsWith('/billing')
   ) {
     return <>{children}</>;
   }
@@ -134,8 +138,9 @@ export default function AppShell({ children }: AppShellProps) {
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { label: 'Contract Vault', href: '/vault', icon: FolderArchive },
     { label: 'Statutory Drafter', href: '/drafter', icon: FileEdit },
+    { label: 'Vault Search', href: '/search', icon: Search },
     { label: 'Obligations & Notices', href: '/obligations', icon: CalendarClock },
-    { label: 'Risk Heatmap', href: '/risk', icon: ShieldAlert },
+    { label: 'Risk Heatmap', href: '/risk-heatmap', icon: ShieldAlert },
   ];
 
   return (

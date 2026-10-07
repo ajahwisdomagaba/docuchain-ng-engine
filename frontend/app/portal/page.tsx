@@ -84,9 +84,14 @@ function ClientPortalContent() {
 
     setIsAuditing(true);
     try {
-      const res = await fetch('http://localhost:5000/api/review/audit', {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      const res = await fetch('/api/ingest', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           contractText,
           title: contractTitle,

@@ -3,11 +3,14 @@ import { redisConnection, sendContractAlertEmail } from '../services/email.servi
 import { supabase } from '../services/supabase';
 
 export const ALERT_QUEUE = 'contract-milestone-alerts';
-export const alertQueue = new Queue(ALERT_QUEUE, { connection: redisConnection });
+export const alertQueue = redisConnection
+  ? new Queue(ALERT_QUEUE, { connection: redisConnection })
+  : null;
 
 const MILESTONES = [90, 60, 30, 7];
 
-export const alertWorker = new Worker(
+export const alertWorker = redisConnection
+  ? new Worker(
   ALERT_QUEUE,
   async (job) => {
     console.log(`[Alert Worker] Processing nightly milestone job: ${job.name} (${new Date().toISOString()})`);
@@ -98,12 +101,18 @@ export const alertWorker = new Worker(
     }
   },
   { connection: redisConnection }
-);
+)
+  : null;
 
 /**
  * Schedules the BullMQ repeatable cron job to fire nightly at 00:00 (Africa/Lagos)
  */
 export async function scheduleNightlyAlertsJob() {
+  if (!alertQueue) {
+    console.log('[DocuChain Queue] REDIS_URL is not set. Nightly milestone alerts were not scheduled.');
+    return;
+  }
+
   await alertQueue.add(
     'process-daily-milestones',
     {},

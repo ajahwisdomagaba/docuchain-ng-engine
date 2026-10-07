@@ -74,11 +74,16 @@ Return ONLY the raw JSON object. Do not include markdown formatting, code blocks
       { role: 'user', content: question },
     ];
 
+    const apiKey = process.env.QOREBIT_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'QOREBIT_API_KEY is not configured.' });
+    }
+
     const response = await fetch('https://api.qorebit.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ'}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',

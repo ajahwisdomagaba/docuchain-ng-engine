@@ -1,6 +1,12 @@
 import { supabase } from '../lib/supabase';
 
-const QOREBIT_API_KEY = process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ';
+function requireQorebitKey(): string {
+  const key = process.env.QOREBIT_API_KEY;
+  if (!key) {
+    throw new Error('QOREBIT_API_KEY is not configured.');
+  }
+  return key;
+}
 
 export function chunkContractText(text: string, maxChunkSize = 800): string[] {
   const clean = text.replace(/\r\n/g, '\n').trim();
@@ -31,41 +37,29 @@ export function chunkContractText(text: string, maxChunkSize = 800): string[] {
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  try {
-    const res = await fetch('https://api.qorebit.ai/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${QOREBIT_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'text-embedding-3-small',
-        input: text.replace(/\n/g, ' ').slice(0, 8000),
-      }),
-    });
+  const res = await fetch('https://api.qorebit.ai/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${requireQorebitKey()}`,
+    },
+    body: JSON.stringify({
+      model: 'text-embedding-3-small',
+      input: text.replace(/\n/g, ' ').slice(0, 8000),
+    }),
+  });
 
-    if (!res.ok) return generateFallbackVector(text);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Embedding request failed (${res.status}): ${errText}`);
+  }
 
-    const data: any = await res.json();
-    return data.data?.[0]?.embedding || generateFallbackVector(text);
-  } catch (err: any) {
-    return generateFallbackVector(text);
+  const data: any = await res.json();
+  const embedding = data.data?.[0]?.embedding;
+  if (!Array.isArray(embedding) || embedding.length === 0) {
+    throw new Error('Embedding response did not include a vector.');
   }
-}
-
-function generateFallbackVector(text: string, dimensions = 1536): number[] {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    hash = (hash << 5) - hash + text.charCodeAt(i);
-    hash |= 0;
-  }
-  const vector = new Array(dimensions);
-  for (let i = 0; i < dimensions; i++) {
-    const val = Math.sin(hash + i);
-    vector[i] = Math.round(val * 10000) / 10000;
-  }
-  const norm = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0)) || 1;
-  return vector.map((v) => v / norm);
+  return embedding;
 }
 
 export async function indexContractEmbeddings(

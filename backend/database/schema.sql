@@ -179,3 +179,23 @@ BEGIN
     LIMIT match_count;
 END;
 $$;
+
+-- Columns used by the vault, drafter, and commercial audit writers.
+-- The original tenancy columns stay; file paths are optional because later
+-- ingest paths store the document text on the row instead of in storage.
+ALTER TABLE contracts ALTER COLUMN file_name DROP NOT NULL;
+ALTER TABLE contracts ALTER COLUMN file_path DROP NOT NULL;
+ALTER TABLE contracts ALTER COLUMN file_type DROP NOT NULL;
+
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS contract_type TEXT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS counterparty TEXT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS risk_score INT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS health_score INT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS raw_text TEXT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS client_id UUID;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS matter_id UUID;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS workspace_id TEXT;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;

@@ -1,10 +1,7 @@
 import './globals.css';
-import { Inter } from 'next/font/google';
 import { AuthProvider } from '@/context/AuthContext';
 import AppShell from '@/components/AppShell';
 import DevTierSwitcher from '@/components/DevTierSwitcher';
-
-const inter = Inter({ subsets: ['latin'] });
 
 export const metadata = {
   title: 'DocuChain.NG — Context-Aware Contract Intelligence for Nigerian Businesses',
@@ -18,12 +15,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.className} bg-slate-950 text-slate-100 min-h-screen antialiased`}>
+      <body className="font-sans bg-slate-950 text-slate-100 min-h-screen antialiased">
         <AuthProvider>
           <AppShell>
             {children}
           </AppShell>
-          <DevTierSwitcher />
+          {process.env.NODE_ENV === 'development' ? <DevTierSwitcher /> : null}
         </AuthProvider>
       </body>
     </html>

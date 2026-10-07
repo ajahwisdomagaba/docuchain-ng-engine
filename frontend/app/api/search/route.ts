@@ -1,37 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
-
-const QOREBIT_API_KEY = process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ';
-
-async function getQueryEmbedding(query: string): Promise<number[]> {
-  try {
-    const res = await fetch('https://api.qorebit.ai/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${QOREBIT_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'text-embedding-3-small',
-        input: query.slice(0, 2000),
-      }),
-    });
-
-    if (!res.ok) throw new Error('Embedding API failed');
-    const data: any = await res.json();
-    return data.data?.[0]?.embedding;
-  } catch {
-    let hash = 0;
-    for (let i = 0; i < query.length; i++) {
-      hash = (hash << 5) - hash + query.charCodeAt(i);
-      hash |= 0;
-    }
-    const vec = new Array(1536);
-    for (let i = 0; i < 1536; i++) vec[i] = Math.sin(hash + i);
-    const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
-    return vec.map((v) => v / norm);
-  }
-}
+import { generateQorebitEmbedding } from '@/lib/aiClient';
 
 export async function POST(req: NextRequest) {
   try {
@@ -48,7 +17,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 });
     }
 
-    const queryVec = await getQueryEmbedding(query.trim());
+    const queryVec = await generateQorebitEmbedding(query.trim());
 
     const { data: results, error } = await supabase.rpc('match_contract_clauses', {
       query_embedding: queryVec,

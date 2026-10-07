@@ -416,8 +416,11 @@ function VaultContent() {
       if (clientId) formData.append("clientId", clientId);
       if (selectedMatterId) formData.append("matterId", selectedMatterId);
 
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
       const res = await fetch("/api/ingest", {
         method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         body: formData,
       });
 
@@ -458,9 +461,14 @@ function VaultContent() {
     setIsAuditing(true);
 
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
       const res = await fetch("/api/ingest", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           contractText: manualText,
           title: manualTitle,
@@ -517,30 +525,30 @@ function VaultContent() {
     setChatMessages((prev) => [...prev, { sender: "user", text: userMsg }]);
     setChatInput("");
 
-    let aiResponse =
-      "Under standard Nigerian Contract Law and CAMA 2020 provisions, clauses must demonstrate mutual consideration and fair commercial terms.";
+    setChatMessages((prev) => [...prev, { sender: "ai", text: "Reviewing that against the contract and Nigerian law..." }]);
 
-    if (
-      userMsg.toLowerCase().includes("rent") ||
-      userMsg.toLowerCase().includes("tenancy")
-    ) {
-      aiResponse =
-        "Under Section 4 of Lagos State Tenancy Law 2011, it is unlawful to demand or receive rent exceeding 1 year for a yearly tenancy. Section 13 mandates a minimum 6-month notice to quit via Form TL5.";
-    } else if (
-      userMsg.toLowerCase().includes("wage") ||
-      userMsg.toLowerCase().includes("salary")
-    ) {
-      aiResponse =
-        "The National Minimum Wage Act mandates a statutory baseline of ₦70,000 per month across Nigeria. Any contractual agreement below this threshold is illegal and unenforceable.";
-    } else if (
-      userMsg.toLowerCase().includes("nda") ||
-      userMsg.toLowerCase().includes("confidential")
-    ) {
-      aiResponse =
-        "Nigerian courts view perpetual NDAs with skepticism. Standard commercial practice is 2-3 years unless it involves proprietary trade secrets.";
+    try {
+      const history = chatMessages.map((message) => ({
+        sender: message.sender,
+        text: message.text,
+      }));
+      const res = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: userMsg, history }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "The assistant could not answer.");
+      setChatMessages((prev) => [
+        ...prev.slice(0, -1),
+        { sender: "ai", text: data.answer || "I could not produce an answer for that question." },
+      ]);
+    } catch (err: any) {
+      setChatMessages((prev) => [
+        ...prev.slice(0, -1),
+        { sender: "ai", text: err.message || "The assistant is unavailable right now." },
+      ]);
     }
-
-    setChatMessages((prev) => [...prev, { sender: "ai", text: aiResponse }]);
   };
 
   const getCategoryBadge = (category: string) => {

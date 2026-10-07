@@ -1,11 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { supabase } from '../lib/supabase';
+
 dotenv.config();
 
-export const supabase = createClient(
-  process.env.SUPABASE_URL || 'http://localhost:54321',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || 'dummy_key'
-);
+export { supabase };
 
 export async function uploadContractFile(filePath: string, fileBuffer: Buffer, mimeType: string): Promise<string> {
   const { data, error } = await supabase.storage.from('contracts').upload(filePath, fileBuffer, {

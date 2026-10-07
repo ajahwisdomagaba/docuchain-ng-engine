@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
+import { generateContractAnalysis } from '@/lib/aiClient';
 
 const DRAFTER_SYSTEM_PROMPT = `
 You are the Lead Nigerian Legal Drafting Counsel for DocuChain.NG.
@@ -73,30 +74,12 @@ Governing Jurisdiction: ${jurisdiction}
 ${customInstructions ? `Special Instructions / Custom Terms:\n${customInstructions}` : 'Standard Nigerian statutory covenants apply.'}
 `;
 
-    // Direct Qorebit / OpenAI request
-    const aiRes = await fetch('https://api.qorebit.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ'}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: DRAFTER_SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.2,
-      }),
+    const rawContent = await generateContractAnalysis({
+      systemPrompt: DRAFTER_SYSTEM_PROMPT,
+      userPrompt,
+      temperature: 0.2,
+      jsonMode: true,
     });
-
-    if (!aiRes.ok) {
-      const errText = await aiRes.text();
-      throw new Error(`AI generation failed (${aiRes.status}): ${errText}`);
-    }
-
-    const aiData = await aiRes.json();
-    const rawContent = aiData.choices?.[0]?.message?.content || '{}';
     const parsedData = extractValidJson(rawContent);
 
     const generatedContractText = parsedData.contract_markdown || rawContent;

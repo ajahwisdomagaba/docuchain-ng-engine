@@ -2,7 +2,13 @@ import dotenv from 'dotenv';
 import { supabase } from '../lib/supabase';
 dotenv.config();
 
-const QOREBIT_API_KEY = process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ';
+function requireQorebitKey(): string {
+  const key = process.env.QOREBIT_API_KEY;
+  if (!key) {
+    throw new Error('QOREBIT_API_KEY is not configured.');
+  }
+  return key;
+}
 
 export interface AuditRiskFlag {
   id?: string;
@@ -182,7 +188,7 @@ Return ONLY the raw JSON object without markdown fences, codeblocks, or extra te
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${QOREBIT_API_KEY}`,
+        Authorization: `Bearer ${requireQorebitKey()}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',

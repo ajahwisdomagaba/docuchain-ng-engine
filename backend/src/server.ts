@@ -1,11 +1,12 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
 import { ContractExtractor } from './services/extractor.service';
 import { TenancyRedlineService } from './services/redline.service';
 import { ContractStorageService } from './services/storage.service';
 import { SemanticSearchService } from './services/search.service';
+import reviewRoutes from './routes/reviewRoutes';
 import { startTelegramBot } from './bot/telegramBot';
 import { scheduleNightlyAlertsJob } from './jobs/contractAlerts.job';
 
@@ -14,12 +15,7 @@ scheduleNightlyAlertsJob().catch(console.error);
 
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
-
-// Initialize Supabase Client
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const PORT = Number(process.env.PORT) || 4000;
 
 // Enable CORS for frontend clients
 app.use(
@@ -31,7 +27,9 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+app.use('/api/review', reviewRoutes);
 
 const extractor = new ContractExtractor();
 const redlineService = new TenancyRedlineService();

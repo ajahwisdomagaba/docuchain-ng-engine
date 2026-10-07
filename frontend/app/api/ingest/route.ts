@@ -21,14 +21,16 @@ async function extractTextFromBuffer(buffer: Buffer, filename: string): Promise<
     }
   }
 
-  // PDF Parsing via safe dynamic require
+  // PDF Parsing via pdf-parse v2 (PDFParse class)
   if (lowerName.endsWith('.pdf')) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const pdfParse = require('pdf-parse');
-      const data = await pdfParse(buffer);
-      if (data && data.text && data.text.trim().length > 0) {
-        return data.text.trim();
+      const { PDFParse } = require('pdf-parse');
+      const parser = new PDFParse({ data: new Uint8Array(buffer) });
+      const result = await parser.getText();
+      await parser.destroy();
+      if (result?.text && result.text.trim().length > 0) {
+        return result.text.trim();
       }
     } catch (e) {
       console.warn('PDF-parse extraction error:', e);
@@ -64,7 +66,14 @@ function parseLlmJson(rawText: string) {
 
 // 3. Dynamic Statutory AI Audit Engine Grounded in Nigerian Law
 async function auditContractWithAI(contractText: string, filename: string) {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.QOREBIT_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const qorebitKey = process.env.QOREBIT_API_KEY;
+  const useOpenAI = Boolean(openaiKey && openaiKey !== 'mock-key' && !openaiKey.startsWith('qb_'));
+  const apiKey = useOpenAI ? openaiKey : qorebitKey;
+  const endpoint = useOpenAI
+    ? 'https://api.openai.com/v1/chat/completions'
+    : `${(process.env.QOREBIT_BASE_URL || 'https://api.qorebit.ai/v1').replace(/\/$/, '')}/chat/completions`;
+  const model = useOpenAI ? 'gpt-4o-mini' : process.env.QOREBIT_MODEL_NAME || 'gpt-4o-mini';
 
   const systemPrompt = `You are the DocuChain.NG Nigerian Statutory Legal Intelligence Engine.
 Analyze ANY legal contract or agreement under Nigerian statutory law:
@@ -102,14 +111,14 @@ Output ONLY a valid JSON object matching this schema:
   }
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model,
         temperature: 0.1,
         response_format: { type: 'json_object' },
         messages: [
@@ -152,7 +161,11 @@ function fallbackHeuristicAudit(text: string, filename: string) {
   }
 
   // 1. Advance Rent Cap Violation
-  if (lower.includes('two years advance') || lower.includes('2 years advance') || lower.includes('14,000,000')) {
+  const illegalAdvanceRent =
+    /two\s*(?:\(\s*2\s*\))?\s*(?:full\s+)?years?\s+advance/.test(lower) ||
+    /\b2\s*(?:full\s+)?years?\s+advance/.test(lower) ||
+    lower.includes('14,000,000');
+  if (illegalAdvanceRent) {
     flags.push({
       clauseTitle: 'Section 4 Rent Cap Violation',
       originalText: 'The Tenant shall pay the sum representing two (2) full years advance rent upon execution of this agreement.',
@@ -166,7 +179,13 @@ function fallbackHeuristicAudit(text: string, filename: string) {
   }
 
   // 2. Deficient Notice to Quit
-  if (lower.includes('two (2) weeks written notice') || lower.includes('two weeks notice') || lower.includes('2 weeks notice')) {
+  const shortNotice =
+    /two\s*(?:\(\s*2\s*\))?\s*weeks?\s+(?:written\s+)?notice/.test(lower) ||
+    /\b2\s*weeks?\s+notice/.test(lower) ||
+    (/(yearly|annual|\byear\b)/.test(lower) &&
+      /(1 month|one month|one\s*\(\s*1\s*\)\s*month)/.test(lower) &&
+      lower.includes('notice'));
+  if (shortNotice) {
     flags.push({
       clauseTitle: 'Deficient Statutory Notice to Quit',
       originalText: 'The Landlord shall give only two (2) weeks written notice to quit, notwithstanding any statutory provisions.',
@@ -206,117 +225,132 @@ function fallbackHeuristicAudit(text: string, filename: string) {
   };
 }
 
+async function resolveRequestUserId(req: NextRequest): Promise<string | null> {
+  const header = req.headers.get('authorization') || '';
+  if (!header.toLowerCase().startsWith('bearer ')) return null;
+  const token = header.slice(7).trim();
+  if (!token) return null;
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) return null;
+  return data.user.id;
+}
+
+async function saveAuditedContract(input: {
+  title: string;
+  extractedText: string;
+  userId: string | null;
+  clientId: string | null;
+  matterId: string | null;
+  workspaceId: string | null;
+}) {
+  const auditData = await auditContractWithAI(input.extractedText, input.title);
+  const dynamicTitle = auditData.contractTitle || input.title.replace(/\.[^/.]+$/, '');
+  const riskScore = 100 - (auditData.overallScore || 75);
+  const flagged = Array.isArray(auditData.riskFlags) && auditData.riskFlags.length > 0;
+
+  const { data: contract, error: contractErr } = await supabase
+    .from('contracts')
+    .insert({
+      id: crypto.randomUUID(),
+      user_id: input.userId,
+      workspace_id: input.workspaceId,
+      title: dynamicTitle,
+      category: auditData.category,
+      counterparty: auditData.counterparty,
+      status: flagged ? 'FLAGGED' : 'COMPLIANT',
+      risk_score: riskScore,
+      health_score: auditData.overallScore || 85,
+      raw_text: input.extractedText,
+      client_id: input.clientId,
+      matter_id: input.matterId,
+      metadata: {
+        overallScore: auditData.overallScore,
+        counterparty: auditData.counterparty,
+        governingLaw: auditData.governingLaw,
+        executiveSummary: auditData.executiveSummary,
+        extractedText: input.extractedText,
+        risk_flags: auditData.riskFlags,
+        category: auditData.category,
+      },
+    })
+    .select()
+    .single();
+
+  if (contractErr || !contract) {
+    throw new Error(contractErr?.message || 'Failed to save the audited contract.');
+  }
+
+  return contract;
+}
+
 // 5. Ingestion POST Handler
 export async function POST(req: NextRequest) {
   try {
-    let title = 'Contract Document';
+    const userId = await resolveRequestUserId(req);
+    const contentType = req.headers.get('content-type') || '';
+    const documents: Array<{ title: string; extractedText: string }> = [];
     let clientId: string | null = null;
     let matterId: string | null = null;
-    let workspaceId = 'default-law-firm-workspace';
-    let extractedText = '';
-
-    // Extract authenticated user ID
-    const { data: { session } } = await supabase.auth.getSession();
-    const userId = session?.user?.id || null;
-
-    const contentType = req.headers.get('content-type') || '';
+    let workspaceId: string | null = null;
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
-      const file = formData.get('file') as File | null;
-      const files = formData.getAll('files') as File[];
       clientId = (formData.get('clientId') as string) || null;
       matterId = (formData.get('matterId') as string) || null;
-      workspaceId = (formData.get('workspaceId') as string) || workspaceId;
+      workspaceId = (formData.get('workspaceId') as string) || null;
 
-      const targetFile = file || files[0];
-      if (targetFile) {
-        title = targetFile.name;
+      const uploaded = [...formData.getAll('files'), formData.get('file')].filter(
+        (entry): entry is File => entry instanceof File
+      );
+
+      for (const targetFile of uploaded) {
         const buffer = Buffer.from(await targetFile.arrayBuffer());
-        extractedText = await extractTextFromBuffer(buffer, targetFile.name);
+        const extractedText = await extractTextFromBuffer(buffer, targetFile.name);
+        if (extractedText.trim()) {
+          documents.push({ title: targetFile.name, extractedText });
+        }
       }
     } else {
       const body = await req.json().catch(() => ({}));
-      title = body.title || title;
       clientId = body.clientId || null;
       matterId = body.matterId || null;
-      workspaceId = body.workspaceId || workspaceId;
-      extractedText = body.contractText || body.content || body.text || body.manualText || '';
+      workspaceId = body.workspaceId || null;
+      const extractedText = body.contractText || body.content || body.text || body.manualText || '';
+      if (String(extractedText).trim()) {
+        documents.push({
+          title: body.title || 'Contract Document',
+          extractedText: String(extractedText),
+        });
+      }
     }
 
-    if (!extractedText || extractedText.trim().length === 0) {
+    if (documents.length === 0) {
       return NextResponse.json(
         { error: 'No readable text could be extracted from the uploaded document.' },
         { status: 400 }
       );
     }
 
-    // 1. Run Dynamic Statutory AI Audit
-    const auditData = await auditContractWithAI(extractedText, title);
-    const dynamicTitle = auditData.contractTitle || title.replace(/\.[^/.]+$/, '');
-    const riskScore = 100 - (auditData.overallScore || 75);
-
-    // 2. PostgreSQL UUID v4
-    const contractUuid = crypto.randomUUID();
-
-    // 3. Insert into Supabase scoped with user_id and workspace_id
-    const { data: contract, error: contractErr } = await supabase
-      .from('contracts')
-      .insert({
-        id: contractUuid,
-        user_id: userId,
-        workspace_id: workspaceId,
-        title: dynamicTitle,
-        category: auditData.category,
-        counterparty: auditData.counterparty,
-        status: (auditData.riskFlags && auditData.riskFlags.length > 0) ? 'FLAGGED' : 'COMPLIANT',
-        risk_score: riskScore,
-        health_score: auditData.overallScore || 85,
-        raw_text: extractedText,
-        client_id: clientId,
-        matter_id: matterId,
-        metadata: {
-          overallScore: auditData.overallScore,
-          counterparty: auditData.counterparty,
-          governingLaw: auditData.governingLaw,
-          executiveSummary: auditData.executiveSummary,
-          extractedText,
-          risk_flags: auditData.riskFlags,
-        },
-      })
-      .select()
-      .single();
-
-    const resultRecord = contract || {
-      id: contractUuid,
-      user_id: userId,
-      workspace_id: workspaceId,
-      title: dynamicTitle,
-      category: auditData.category,
-      counterparty: auditData.counterparty,
-      status: (auditData.riskFlags && auditData.riskFlags.length > 0) ? 'Flagged' : 'Compliant',
-      overallScore: auditData.overallScore,
-      health_score: auditData.overallScore || 85,
-      riskCount: auditData.riskFlags ? auditData.riskFlags.length : 0,
-      metadata: {
-        extractedText,
-        overallScore: auditData.overallScore,
-        risk_flags: auditData.riskFlags,
-        counterparty: auditData.counterparty,
-        governingLaw: auditData.governingLaw,
-      },
-    };
+    const saved = [];
+    for (const document of documents) {
+      saved.push(
+        await saveAuditedContract({
+          title: document.title,
+          extractedText: document.extractedText,
+          userId,
+          clientId,
+          matterId,
+          workspaceId,
+        })
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      contract: resultRecord,
-      contracts: [resultRecord],
-      results: [
-        {
-          dbRecord: resultRecord,
-        },
-      ],
-      contractId: contractUuid,
+      contract: saved[0],
+      contracts: saved,
+      results: saved.map((record) => ({ dbRecord: record, success: true })),
+      contractId: saved[0].id,
       message: 'Contract ingested and audited successfully',
     });
   } catch (err: any) {

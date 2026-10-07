@@ -1,4 +1,10 @@
-const QOREBIT_API_KEY = process.env.QOREBIT_API_KEY || 'qb_live_vI39k_W01kgXXVbFLZa-9vRxAAtfOs-biA68fND2GgQ';
+require('dotenv').config();
+
+const QOREBIT_API_KEY = process.env.QOREBIT_API_KEY;
+if (!QOREBIT_API_KEY) {
+  console.error('QOREBIT_API_KEY is not configured.');
+  process.exit(1);
+}
 
 async function findEmbeddingModels() {
   try {

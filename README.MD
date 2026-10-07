@@ -73,7 +73,7 @@ docuchain-ng-engine/
 **Backend configuration** — create `backend/.env`:
 
 ```env
-PORT=3000
+PORT=4000
 GROQ_API_KEY=your_groq_api_key
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
@@ -83,7 +83,7 @@ SUPABASE_ANON_KEY=your_anon_key
 **Frontend configuration** — create `frontend/.env.local`:
 
 ```env
-NEXT_PUBLIC_BACKEND_URL=http://localhost:3000
+NEXT_PUBLIC_BACKEND_URL=http://localhost:4000
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 ```
