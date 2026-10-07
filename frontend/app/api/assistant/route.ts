@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
       userPrompt: `${contractText ? `Contract:\n${String(contractText).slice(0, 24000)}\n\n` : ''}${priorTurns ? `Conversation so far:\n${priorTurns}\n\n` : ''}Question: ${question.trim()}`,
       temperature: 0.2,
       jsonMode: false,
+      timeoutMs: 6000,
+      maxTokens: 350,
     });
 
     return NextResponse.json({ success: true, answer });

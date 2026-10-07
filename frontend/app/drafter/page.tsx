@@ -20,9 +20,11 @@ export default function StatutoryDrafterPage() {
   const [jurisdiction, setJurisdiction] = useState('Lagos State, Federal Republic of Nigeria');
   const [generatedDraft, setGeneratedDraft] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleGenerate = async () => {
     setLoading(true);
+    setError('');
     try {
       const res = await fetch('/api/drafter', {
         method: 'POST',
@@ -39,11 +41,14 @@ export default function StatutoryDrafterPage() {
       });
 
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Drafting failed');
+      }
       if (data?.draft) {
         setGeneratedDraft(data.draft);
       }
-    } catch (err) {
-      console.error('Draft generation error:', err);
+    } catch (err: any) {
+      setError(err.message || 'Drafting failed');
     } finally {
       setLoading(false);
     }
@@ -169,6 +174,7 @@ export default function StatutoryDrafterPage() {
           >
             {loading ? 'Generating Statutory Draft...' : '✨ Generate Compliant Draft'}
           </button>
+          {error ? <p className="text-xs text-rose-400">{error}</p> : null}
         </div>
 
         {/* Right Column: Output */}

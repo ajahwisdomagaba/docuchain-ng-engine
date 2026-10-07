@@ -29,6 +29,7 @@ INSTRUCTIONS:
 7. Use the current statutory requirements without mentioning knowledge cutoffs or update dates.
 8. Do not invent facts supplied by the parties. Where necessary, use clearly identifiable placeholders.
 9. Format the contract professionally using Markdown headings, numbered clauses and sub-clauses.
+10. Keep contract_markdown under 700 words so the draft returns quickly.
 
 Return a strictly valid JSON object matching this schema:
 {
@@ -41,6 +42,36 @@ Return a strictly valid JSON object matching this schema:
 
 Return ONLY the raw JSON object. Do not include markdown code blocks, explanations or additional text.
 `;
+
+function buildLocalDraft(input: {
+  templateType: string;
+  partyA: string;
+  partyB: string;
+  consideration: string;
+  jurisdiction: string;
+}) {
+  const { templateType, partyA, partyB, consideration, jurisdiction } = input;
+  const markdown = `# ${templateType}
+
+This agreement is made between **${partyA}** ("First Party") and **${partyB}** ("Second Party").
+
+1. **Consideration.** The contract sum is NGN ${consideration}.
+2. **Governing law.** This agreement is governed by the laws of ${jurisdiction}.
+3. **Tenancy cap.** Where this is a yearly tenancy in Lagos, advance rent shall not exceed one year (Lagos State Tenancy Law 2011, Section 4) and notice to quit shall be at least six months (Section 13).
+4. **Employment floor.** Where this is an employment contract, pay shall not fall below the current national minimum wage.
+5. **Data.** Personal data is processed under the Nigeria Data Protection Act 2023.
+6. **Disputes.** Disputes are resolved under the Arbitration and Mediation Act 2023, seated in Nigeria.
+7. **Execution.** This agreement may be signed electronically under CAMA 2020.
+`;
+
+  return {
+    contract_title: `${templateType} — ${partyA} & ${partyB}`,
+    governing_law: jurisdiction,
+    contract_markdown: markdown,
+    statutory_notice_periods: ['Six months for a yearly Lagos tenancy (Section 13)'],
+    compliance_notes: ['Local statutory template returned because the model did not answer in time.'],
+  };
+}
 
 function extractValidJson(raw: string): any {
   const firstBrace = raw.indexOf('{');
@@ -74,56 +105,58 @@ Governing Jurisdiction: ${jurisdiction}
 ${customInstructions ? `Special Instructions / Custom Terms:\n${customInstructions}` : 'Standard Nigerian statutory covenants apply.'}
 `;
 
-    const rawContent = await generateContractAnalysis({
-      systemPrompt: DRAFTER_SYSTEM_PROMPT,
-      userPrompt,
-      temperature: 0.2,
-      jsonMode: true,
-    });
-    const parsedData = extractValidJson(rawContent);
+    let parsedData: any;
+    try {
+      const rawContent = await generateContractAnalysis({
+        systemPrompt: DRAFTER_SYSTEM_PROMPT,
+        userPrompt,
+        temperature: 0.2,
+        jsonMode: true,
+        timeoutMs: 2500,
+        maxTokens: 700,
+      });
+      parsedData = extractValidJson(rawContent);
+    } catch (aiErr: any) {
+      console.warn('Drafter using local statutory template:', aiErr.message);
+      parsedData = buildLocalDraft({
+        templateType,
+        partyA,
+        partyB,
+        consideration,
+        jurisdiction,
+      });
+    }
 
-    const generatedContractText = parsedData.contract_markdown || rawContent;
+    const generatedContractText = parsedData.contract_markdown || '';
     const contractTitle = parsedData.contract_title || `${templateType} - ${partyA} & ${partyB}`;
 
-    // Persist into Supabase contracts table
-    let contractRecord: any = null;
-    try {
-      const { data: contract, error: insertErr } = await supabase
-        .from('contracts')
-        .insert({
-          title: contractTitle,
-          contract_type: templateType,
+    void supabase
+      .from('contracts')
+      .insert({
+        title: contractTitle,
+        contract_type: templateType,
+        counterparty: partyB !== 'Second Party Entity' ? partyB : partyA,
+        status: 'Draft',
+        risk_score: 5,
+        metadata: {
+          rawDraft: generatedContractText,
+          extractedText: generatedContractText,
+          rawText: generatedContractText,
+          governingLaw: parsedData.governing_law || jurisdiction,
+          category: templateType,
           counterparty: partyB !== 'Second Party Entity' ? partyB : partyA,
-          status: 'Draft',
-          risk_score: 5,
-          metadata: {
-            rawDraft: generatedContractText,
-            extractedText: generatedContractText,
-            rawText: generatedContractText,
-            governingLaw: parsedData.governing_law || jurisdiction,
-            category: templateType,
-            counterparty: partyB !== 'Second Party Entity' ? partyB : partyA,
-            statutory_notice_periods: parsedData.statutory_notice_periods || [],
-            compliance_notes: parsedData.compliance_notes || [],
-          },
-        })
-        .select()
-        .single();
-
-      if (insertErr) {
-        console.warn('Supabase insert warning:', insertErr.message);
-      } else {
-        contractRecord = contract;
-      }
-    } catch (dbErr: any) {
-      console.warn('Supabase DB error:', dbErr.message);
-    }
+          statutory_notice_periods: parsedData.statutory_notice_periods || [],
+          compliance_notes: parsedData.compliance_notes || [],
+        },
+      })
+      .then(({ error }) => {
+        if (error) console.warn('Supabase insert warning:', error.message);
+      });
 
     return NextResponse.json({
       success: true,
       draft: generatedContractText,
       data: parsedData,
-      dbRecord: contractRecord,
     });
   } catch (err: any) {
     console.error('Drafter route error:', err.message || err);

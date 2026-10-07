@@ -67,12 +67,16 @@ app.post('/api/review', async (req: Request, res: Response) => {
 
     let savedContract = null;
     if (extraction.data) {
-      savedContract = await storageService.saveAnalyzedContract(
-        documentText,
-        extraction.data,
-        extraction.issues,
-        redlines
-      );
+      try {
+        savedContract = await storageService.saveAnalyzedContract(
+          documentText,
+          extraction.data,
+          extraction.issues,
+          redlines
+        );
+      } catch (saveError) {
+        console.error('Review saved locally in the response; database write failed:', saveError);
+      }
     }
 
     return res.status(200).json({

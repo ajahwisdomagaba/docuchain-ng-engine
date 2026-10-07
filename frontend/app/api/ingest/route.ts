@@ -73,7 +73,12 @@ async function auditContractWithAI(contractText: string, filename: string) {
   const endpoint = useOpenAI
     ? 'https://api.openai.com/v1/chat/completions'
     : `${(process.env.QOREBIT_BASE_URL || 'https://api.qorebit.ai/v1').replace(/\/$/, '')}/chat/completions`;
-  const model = useOpenAI ? 'gpt-4o-mini' : process.env.QOREBIT_MODEL_NAME || 'gpt-4o-mini';
+  const configuredModel = process.env.QOREBIT_MODEL_NAME;
+  const model = useOpenAI
+    ? 'gpt-4o-mini'
+    : configuredModel && configuredModel !== 'qorebit-v1'
+      ? configuredModel
+      : 'gpt-4o-mini';
 
   const systemPrompt = `You are the DocuChain.NG Nigerian Statutory Legal Intelligence Engine.
 Analyze ANY legal contract or agreement under Nigerian statutory law:
@@ -112,6 +117,7 @@ Output ONLY a valid JSON object matching this schema:
 
   try {
     const res = await fetch(endpoint, {
+      signal: AbortSignal.timeout(8000),
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -120,10 +126,11 @@ Output ONLY a valid JSON object matching this schema:
       body: JSON.stringify({
         model,
         temperature: 0.1,
+        max_tokens: 700,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Analyze this contract:\n\nFilename: ${filename}\n\nContent:\n${contractText.slice(0, 35000)}` },
+          { role: 'user', content: `Analyze this contract:\n\nFilename: ${filename}\n\nContent:\n${contractText.slice(0, 8000)}` },
         ],
       }),
     });
